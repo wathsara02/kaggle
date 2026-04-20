@@ -1,0 +1,205 @@
+=============================================================================
+                INTELLIGENT OMI — COMPLETE USAGE GUIDE
+=============================================================================
+
+Project: Self-play MARL agent for the card game Omi
+Algorithm: MAPPO with optional LSTM recurrent policy
+Last updated: April 2026
+
+=============================================================================
+0. FIRST-TIME SETUP
+=============================================================================
+
+1. Install Python 3.8+ (https://python.org)
+
+2. Open a terminal in this project folder and install dependencies:
+
+      pip install -r requirements.txt
+
+   NOTE: requirements.txt pulls the CUDA 12.1 build of PyTorch by default.
+   If you don't have an NVIDIA GPU, replace the first line in requirements.txt
+   with the plain CPU index:
+      --extra-index-url https://download.pytorch.org/whl/cpu
+
+3. Verify the install with a quick smoke-test (20 episodes, ~10 seconds):
+
+      python scripts/train.py --config configs/small.yaml
+
+   You should see two [TRAINING PROGRESS] blocks and then [TRAINING COMPLETE]
+   with no errors.
+
+=============================================================================
+1. TRAINING
+=============================================================================
+
+--- Standard run (feed-forward policy, CPU) ---
+
+   python scripts/train.py
+
+   Uses: configs/default.yaml
+   Output: runs/default_cpu/
+
+--- LSTM run (recommended — agents build memory across each 8-trick hand) ---
+
+   python scripts/train.py --config configs/lstm.yaml
+
+   Output: runs/lstm_fixed/
+
+--- Resume after a Ctrl+C or crash ---
+
+   python scripts/train.py --config configs/lstm.yaml --resume
+
+   Resumes from: runs/lstm_fixed/checkpoint_latest.pt
+   (A new resume checkpoint is saved every 2500 episodes for lstm.yaml,
+    every 500 episodes for default.yaml.)
+
+--- Quick smoke-test ---
+
+   python scripts/train.py --config configs/small.yaml
+
+=============================================================================
+2. EVALUATION
+=============================================================================
+
+Test your trained agent against a baseline bot.
+
+--- LSTM model vs Rule-Based bot (default) ---
+
+   python scripts/eval.py --config configs/lstm.yaml \
+       --weights runs/lstm_fixed/policy_last.pt \
+       --episodes 200
+
+--- LSTM model vs Random bot ---
+
+   python scripts/eval.py --config configs/lstm.yaml \
+       --weights runs/lstm_fixed/policy_last.pt \
+       --baseline random --episodes 200
+
+--- Feed-forward model vs Rule-Based bot ---
+
+   python scripts/eval.py --weights runs/default_cpu/policy_last.pt \
+       --episodes 200
+
+Results are printed to the terminal and saved to:
+   runs/<exp_name>/evaluation_summary.csv
+
+=============================================================================
+3. EXPORTING A MODEL
+=============================================================================
+
+Package a trained model for deployment or archival:
+
+   python scripts/export.py --weights runs/lstm_fixed/policy_last.pt
+
+Writes a clean policy_agent.pt and config.json to: artifacts/
+
+=============================================================================
+4. TESTING (Verify game logic)
+=============================================================================
+
+   pytest
+
+Runs all unit tests in the tests/ folder to verify rules and env correctness.
+
+=============================================================================
+5. CONFIGS — WHAT TO CHANGE AND WHERE
+=============================================================================
+
+All configs inherit from configs/default.yaml. Partial configs (lstm.yaml,
+small.yaml) only override what's different. You should only edit DEFAULT.YAML
+for global tuning; do not duplicate keys in partial configs.
+
+KEY PARAMETERS IN default.yaml:
+
+  device: cuda              # "cuda" for GPU, "cpu" to force CPU
+  seed: 42
+
+  model:
+    recurrent_type: none    # "none" = feed-forward, "lstm" = LSTM policy
+    recurrent_hidden_size: 128
+    critic_hidden_size: 128
+
+  algo:
+    lr: 0.0005              # Learning rate (anneals to lr_min over training)
+    lr_min: 0.00001
+    clip_range: 0.2         # PPO clip epsilon
+    entropy_coef: 0.1       # Exploration bonus (anneals to entropy_coef_min)
+    entropy_coef_min: 0.001
+    gae_lambda: 0.95
+    gamma: 0.99
+    batch_size: 512         # Mini-batch size per PPO epoch
+    ppo_epochs: 10          # PPO update passes per episode batch
+
+  training:
+    episodes: 10000000
+    num_envs: 16            # Parallel environments (see section 6 for tuning)
+    checkpoint_interval: 500
+
+  reward_shaping:
+    enabled: true
+    illegal_action_penalty: 0.1   # Subtracted on illegal move
+    overplay_penalty: 0.2         # Subtracted when agent trumps own teammate
+    trick_reward: 0.2             # Added when team wins a trick
+    cap_bonus: 0.5                # Added when winning team takes all 8 tricks
+    declarer_bonus: 0.1           # Added to trump declarer on win
+    cap_penalty: 0.5              # Subtracted when losing team is swept
+
+KEY PARAMETERS IN lstm.yaml (overrides only):
+
+  model:
+    recurrent_type: lstm
+    recurrent_hidden_size: 256
+    critic_hidden_size: 256
+
+  algo:
+    batch_size: 512
+    ppo_epochs: 10
+
+  training:
+    episodes: 10000000
+    exp_name: lstm_fixed
+    checkpoint_interval: 2500
+
+=============================================================================
+6. SPEEDING UP TRAINING
+=============================================================================
+
+In order of impact:
+
+  1. USE A GPU — set `device: cuda` in default.yaml. Check availability:
+        python -c "import torch; print(torch.cuda.is_available())"
+
+  2. INCREASE num_envs — runs N games in parallel. Good starting points:
+        8–16 parallel envs  →  budget CPU
+        32–64 parallel envs →  high-core-count CPU (e.g. 16+ cores)
+     Edit `training -> num_envs` in default.yaml.
+
+  3. REDUCE ppo_epochs — dropping from 10 to 6 cuts update time ~40%
+     with minimal quality loss, especially early in training.
+
+  4. INCREASE batch_size — try 1024; reduces gradient steps per episode.
+
+  5. INCREASE checkpoint_interval — more episodes between disk writes
+     (2500 is already good for lstm.yaml).
+
+=============================================================================
+7. OUTPUT FILES
+=============================================================================
+
+  runs/<exp_name>/
+    checkpoint_latest.pt      — Latest resumable checkpoint (policy + critic
+                                  + optimizer state + episode count)
+    policy_1_3.pt             — Policy weights at 33% of training
+    policy_2_3.pt             — Policy weights at 66% of training
+    policy_last.pt            — Final policy weights
+    critic_last.pt            — Final critic weights
+    training_summary.csv      — Win rates and episode stats (logged every 10 ep)
+    evaluation_summary.csv    — Eval results (written by eval.py)
+
+  artifacts/
+    policy_agent.pt           — Exported deployable policy
+    config.json               — Corresponding config snapshot
+
+=============================================================================
+Developed for the Intelligent Omi Project · All models saved in runs/
+=============================================================================

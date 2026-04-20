@@ -1,0 +1,16 @@
+# =============================================================================
+# LSTM TRAINING CONFIG
+# Enables the LSTM recurrent policy so agents reason sequentially over the
+# cards played within each hand (8-trick round).
+# The hidden state resets at the start of every new hand.
+# =============================================================================
+
+model:
+  recurrent_type: lstm         # Enable LSTM memory
+  recurrent_hidden_size: 256   # LSTM hidden units
+  critic_hidden_size: 256
+
+training:
+  episodes: 10000000
+  exp_name: lstm_cpu
+  checkpoint_interval: 2500

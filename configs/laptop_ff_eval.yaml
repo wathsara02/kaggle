@@ -1,0 +1,47 @@
+# Eval config matching the original laptop_ff model architecture (hidden_size=128)
+seed: 42
+device: cpu
+
+model:
+  recurrent_hidden_size: 128
+  recurrent_type: none
+  critic_hidden_size: 128
+
+algo:
+  lr: 0.0003
+  lr_min: 0.00001
+  lr_annealing: true
+  clip_range: 0.2
+  entropy_coef: 0.01
+  value_coef: 0.5
+  gae_lambda: 0.95
+  gamma: 0.99
+  batch_size: 512
+  ppo_epochs: 4
+  max_grad_norm: 0.5
+  rule_mix_prob: 0.3
+
+training:
+  episodes: 5000000
+  num_envs: 1
+  exp_name: laptop_ff
+  log_interval: 1000
+  checkpoint_interval: 5000
+
+reward_shaping:
+  enabled: true
+  illegal_action_penalty: -0.1
+  overplay_penalty: -0.2
+  trick_reward: 0.2
+  cap_bonus: 0.5
+  declarer_bonus: 0.1
+  cap_penalty: -0.5
+  trump_quality_bonus: 0.2
+
+eval:
+  episodes: 200
+  baseline: rule
+  deterministic: true
+
+export:
+  output_dir: artifacts

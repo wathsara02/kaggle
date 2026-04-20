@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(mkdir -p trash)",
+      "Bash(mv probe_trump.py evaluate_trump_logic.py parse_evals.py eval_out.txt eval_out_utf8.txt speed_log.txt INSTRUCTIONS.txt trash/)",
+      "Bash(python scripts/eval.py --config configs/default.yaml --weights runs/laptop_ff/checkpoint_latest.pt --episodes 2000 --baseline rule --deterministic)",
+      "Bash(python scripts/eval.py --config configs/laptop_ff_eval.yaml --weights runs/laptop_ff/checkpoint_latest.pt --episodes 2000 --baseline rule --deterministic)"
+    ]
+  }
+}

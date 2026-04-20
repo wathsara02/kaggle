@@ -1,0 +1,45 @@
+=========================================================
+EXPLAINING THE OMI AI PROJECT: DIRECTORY & CODE BREAKDOWN
+=========================================================
+
+1. WHAT IS THIS PROJECT?
+---------------------------------------------------------
+This project is an advanced Artificial Intelligence (AI) environment designed to learn and play "Omi," a highly strategic 4-player, trick-taking team card game popular in Sri Lanka. It uses "Deep Reinforcement Learning," meaning the AI starts knowing almost nothing but the legal moves, and learns how to master the game purely through trial-and-error over millions of simulated matches.
+
+
+2. FOLDER STRUCTURE & IMPORTANT FILES
+---------------------------------------------------------
+Here is exactly what every folder in the project does, and the most important code files inside them:
+
+📁 `omi_env/` (The Game Engine)
+This folder contains the actual card game and its rules. The AI has to plug into this folder to play.
+  - `rules.py`: The absolute core logic of Omi. It dictates how the 32-card deck is built, how cards are dealt, who wins a trick based on the trump suit, and mathematically calculates exactly what cards a player is legally allowed to play (must-follow-suit).
+  - `env.py`: This is the "PettingZoo Wrapper". Think of this as the referee or interface. It controls whose turn it is, hands out +1 or -1 rewards when the game finishes, and passes the game state to the AI.
+  - `encoding.py`: An AI brain only understands numbers. This file translates things like "King of Hearts" or "Trick 3" into an array of 0s and 1s so the neural network can "see" the game.
+
+📁 `models/` (The AI's Brains)
+This folder contains the architecture for the Neural Networks (the actual brains).
+  - `policy.py` (The Actor): This is the individual player's brain. It has an LSTM (Long Short-Term Memory) which allows it to naturally learn to "count cards" by remembering what was played earlier in the match. It only sees its own hand and the table.
+  - `critic.py` (The Critic): This is the "Omniscient Coach" used ONLY during training. It looks at everyone's hidden cards simultaneously to grade how "good" or "bad" the Actor's decisions were. 
+
+📁 `marl/` (The Training Loop)
+  - `r_mappo.py`: MARL stands for Multi-Agent Reinforcement Learning. This file contains the dense math that actively updates the Actor's and Critic's brains based on whether they won or lost their Omi matches.
+
+📁 `scripts/` (The Execution Files)
+  - `train.py`: The script you actually run to start training. It boots up the game, connects the AI, loops through exactly 10,000 matches, and saves the win/loss logs to a CSV file.
+  - `eval.py`: Used after training is finished to put the trained AI into a live test match to see how well it plays.
+
+📁 `configs/` (The Settings)
+  - `default.yaml` / `small.yaml`: Text files that control the training parameters. If you want the AI to play 1,000,000 matches instead of 10,000, or if you want to change its learning speed, you edit these files.
+
+📁 `baselines/` (The Dumb Bots)
+  - `random_agent.py` / `rule_based_agent.py`: Simple, hard-coded bots that just play randomly or follow basic logic. These exist so the ultra-smart AI has a standard, weak opponent to practice against and prove it is learning.
+
+
+3. WHAT MAKES THIS PROJECT STAND OUT?
+---------------------------------------------------------
+🏆 Total Fairness (No Cheating!): The AI uses "Centralized Training with Decentralized Execution" (CTDE). The omniscient Coach (`critic.py`) is deleted when a real game starts. The AI plays 100% fairly, using only its own memory and its own hidden hand.
+
+🤝 Cooperative Teamwork: Because the reward system gives both team members +1 for a win, the AI teaches itself advanced teamwork—meaning it will learn to sacrifice its own high cards to help its partner win a trick!
+
+⚙️ Strict Action Masking: The engine physically blocks the AI from ever attempting an illegal move, forcing it to spend 100% of its brainpower on *strategy* rather than figuring out how to play a legal card.

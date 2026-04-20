@@ -1,0 +1,64 @@
+# =============================================================================
+# CURRICULUM TRAINING CONFIGURATION — Laptop (CPU)
+# Phase 1: Team A (players 0, 2) vs random opponents (players 1, 3)
+# Phase 2: Team A vs frozen snapshot of itself, refreshed every N episodes
+# =============================================================================
+
+seed: 42
+device: cpu
+
+model:
+  recurrent_hidden_size: 256
+  recurrent_type: none
+  critic_hidden_size: 256
+
+algo:
+  lr: 0.0003
+  lr_min: 0.00001
+  lr_annealing: true
+  clip_range: 0.2
+  entropy_coef: 0.01
+  value_coef: 0.5
+  gae_lambda: 0.95
+  gamma: 0.99
+  batch_size: 512          # smaller batch for CPU
+  ppo_epochs: 4
+  max_grad_norm: 0.5
+  rule_mix_prob: 0.0       # unused in curriculum mode; opponents are controlled by phase
+
+training:
+  episodes: 100000
+  num_envs: 1              # single env on laptop
+  exp_name: laptop_curriculum
+  log_interval: 1000
+  checkpoint_interval: 2000
+
+reward_shaping:
+  enabled: true
+  illegal_action_penalty: -0.1
+  overplay_penalty: -0.2
+  trick_reward: 0.2
+  cap_bonus: 0.5
+  declarer_bonus: 0.1
+  cap_penalty: -0.5
+  trump_quality_bonus: 0.2
+
+# ---------------------------------------------------------------------------
+# Curriculum settings
+# ---------------------------------------------------------------------------
+curriculum:
+  enabled: true
+  # Phase 1 → Phase 2 when rolling win rate reaches this threshold
+  phase1_win_rate_threshold: 0.65
+  # Rolling window size (episodes) used to measure win rate
+  phase1_window: 300
+  # In Phase 2: refresh the frozen opponent every N episodes
+  frozen_update_interval: 1000
+
+eval:
+  episodes: 200
+  baseline: rule
+  deterministic: true
+
+export:
+  output_dir: artifacts

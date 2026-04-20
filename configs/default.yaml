@@ -1,0 +1,73 @@
+# =============================================================================
+# KAGGLE T4 TRAINING CONFIGURATION
+# Optimised for Kaggle T4 x1 GPU (16 GB VRAM).
+# =============================================================================
+
+# Reproducibility
+seed: 42
+
+# Hardware: "cpu" or "cuda"
+device: cuda
+
+# ---------------------------------------------------------------------------
+# Model architecture
+# ---------------------------------------------------------------------------
+model:
+  recurrent_hidden_size: 256   # OPTIMISED: was 128 — T4 can handle larger model
+  recurrent_type: none         # "none" = feed-forward; "lstm" = LSTM with per-hand hidden state
+  critic_hidden_size: 256      # OPTIMISED: was 128
+
+# ---------------------------------------------------------------------------
+# PPO / MAPPO algorithm hyper-parameters
+# ---------------------------------------------------------------------------
+algo:
+  lr: 0.0003              # Adam learning rate (shared for policy & critic)
+  lr_min: 0.00001         # minimum LR at end of training (linear annealing floor)
+  lr_annealing: true      # linearly decay LR from lr → lr_min over all episodes
+  clip_range: 0.2         # PPO clipping epsilon
+  entropy_coef: 0.05      # start high — decays to entropy_coef_end during training
+  entropy_coef_end: 0.01  # final entropy coefficient after full annealing
+  value_coef: 0.5         # value loss coefficient in combined loss
+  gae_lambda: 0.95        # GAE lambda (bias-variance trade-off)
+  gamma: 0.99             # discount factor
+  batch_size: 4096        # KAGGLE: scaled with num_envs (32 envs → 4096 batch)
+  ppo_epochs: 8           # KAGGLE: more epochs per batch to extract more learning per collect
+  max_grad_norm: 0.5      # gradient clipping norm
+  rule_mix_prob: 0.5      # IMPROVED: was 0.3 — more diverse opponents beyond pure self-play
+
+# ---------------------------------------------------------------------------
+# Training loop
+# ---------------------------------------------------------------------------
+training:
+  episodes: 5000000          # ~2 Kaggle sessions with --resume; ~500K episodes per 12h session
+  num_envs: 32             # KAGGLE: doubled from 16 — T4 16GB handles 32 parallel envs
+  exp_name: kaggle_run     # run directory name under runs/
+  log_interval: 5000       # KAGGLE: was 1000 — less frequent CSV writes reduce I/O overhead
+  checkpoint_interval: 25000 # KAGGLE: was 5000 — save every ~25K episodes is plenty
+
+# ---------------------------------------------------------------------------
+# Reward Shaping — BUG FIX: penalties must be NEGATIVE values
+# ---------------------------------------------------------------------------
+reward_shaping:
+  enabled: true
+  illegal_action_penalty: -0.1  # BUG FIX: was positive in original code
+  overplay_penalty: -0.2        # BUG FIX: was positive in original code
+  trick_reward: 0.05         # IMPROVED: was 0.2 — reduced so terminal reward dominates
+  cap_bonus: 0.5
+  declarer_bonus: 0.1
+  cap_penalty: -0.5             # BUG FIX: was positive in original code
+  trump_quality_bonus: 0.2      # Immediate reward for choosing the suit held most in full hand
+
+# ---------------------------------------------------------------------------
+# Evaluation (used by scripts/eval.py)
+# ---------------------------------------------------------------------------
+eval:
+  episodes: 200
+  baseline: rule
+  deterministic: true
+
+# ---------------------------------------------------------------------------
+# Export (used by scripts/export.py)
+# ---------------------------------------------------------------------------
+export:
+  output_dir: artifacts

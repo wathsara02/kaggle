@@ -1,0 +1,18 @@
+# =============================================================================
+# QUICK-TEST OVERRIDE CONFIG
+# Use this for fast smoke-tests (e.g. while debugging).
+# =============================================================================
+
+seed: 0
+model:
+  recurrent_hidden_size: 64
+  critic_hidden_size: 64
+algo:
+  batch_size: 64
+training:
+  episodes: 20
+  exp_name: small_cpu_demo
+reward_shaping:
+  enabled: true
+  trick_reward: 0.1            # added to both teammates when their team wins a trick
+  illegal_action_penalty: -0.1

@@ -1,0 +1,88 @@
+﻿[EVALUATION ù 10% COMPLETE]
+Episodes evaluated: 10
+Block episodes: 10
+Learned agent wins: 2
+Baseline wins: 4
+Learned agent win rate: 20.0%
+Avg episode length: 32.0
+Illegal actions: 0
+[EVALUATION ù 20% COMPLETE]
+Episodes evaluated: 20
+Block episodes: 10
+Learned agent wins: 3
+Baseline wins: 5
+Learned agent win rate: 30.0%
+Avg episode length: 32.0
+Illegal actions: 0
+[EVALUATION ù 30% COMPLETE]
+Episodes evaluated: 30
+Block episodes: 10
+Learned agent wins: 6
+Baseline wins: 4
+Learned agent win rate: 60.0%
+Avg episode length: 32.0
+Illegal actions: 0
+[EVALUATION ù 40% COMPLETE]
+Episodes evaluated: 40
+Block episodes: 10
+Learned agent wins: 0
+Baseline wins: 6
+Learned agent win rate: 0.0%
+Avg episode length: 32.0
+Illegal actions: 0
+[EVALUATION ù 50% COMPLETE]
+Episodes evaluated: 50
+Block episodes: 10
+Learned agent wins: 6
+Baseline wins: 4
+Learned agent win rate: 60.0%
+Avg episode length: 32.0
+Illegal actions: 0
+[EVALUATION ù 60% COMPLETE]
+Episodes evaluated: 60
+Block episodes: 10
+Learned agent wins: 5
+Baseline wins: 5
+Learned agent win rate: 50.0%
+Avg episode length: 32.0
+Illegal actions: 0
+[EVALUATION ù 70% COMPLETE]
+Episodes evaluated: 70
+Block episodes: 10
+Learned agent wins: 4
+Baseline wins: 4
+Learned agent win rate: 40.0%
+Avg episode length: 32.0
+Illegal actions: 0
+[EVALUATION ù 80% COMPLETE]
+Episodes evaluated: 80
+Block episodes: 10
+Learned agent wins: 1
+Baseline wins: 3
+Learned agent win rate: 10.0%
+Avg episode length: 32.0
+Illegal actions: 0
+[EVALUATION ù 90% COMPLETE]
+Episodes evaluated: 90
+Block episodes: 10
+Learned agent wins: 6
+Baseline wins: 3
+Learned agent win rate: 60.0%
+Avg episode length: 32.0
+Illegal actions: 0
+[EVALUATION ù 100% COMPLETE]
+Episodes evaluated: 100
+Block episodes: 10
+Learned agent wins: 3
+Baseline wins: 7
+Learned agent win rate: 30.0%
+Avg episode length: 32.0
+Illegal actions: 0
+[EVALUATION ù 100% COMPLETE]
+Episodes evaluated: 100
+Learned agent wins: 36
+Baseline wins: 45
+Learned agent win rate: 36.0%
+Avg episode length: 32.0
+Illegal actions: 0
+Win rate 95% CI: (0.333, 0.543)

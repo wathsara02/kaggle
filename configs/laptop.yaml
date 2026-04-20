@@ -1,0 +1,34 @@
+# =============================================================================
+# LAPTOP / GTX 1650 CONFIG
+# Tuned for a 4 GB VRAM GPU (GTX 1650) with a 6-core / 12-thread CPU.
+# Inherits defaults from configs/default.yaml; only overrides what differs.
+# =============================================================================
+
+device: cuda   # GTX 1650 supports CUDA — faster than CPU
+
+# ---------------------------------------------------------------------------
+# Smaller model — halved hidden size keeps the model well within 4 GB VRAM.
+# The 194-dim observation is still fully captured; you only sacrifice some
+# representational capacity at each layer, which is acceptable at this scale.
+# ---------------------------------------------------------------------------
+model:
+  recurrent_hidden_size: 128   # was 256 — halved for 4 GB VRAM
+  critic_hidden_size: 128      # was 256
+
+# ---------------------------------------------------------------------------
+# PPO hyper-parameters adjusted for smaller GPU memory
+# ---------------------------------------------------------------------------
+algo:
+  batch_size: 512   # was 2048 — fits comfortably in 4 GB VRAM
+  # All other algo settings (lr, clip_range, gamma, etc.) inherit from default
+
+# ---------------------------------------------------------------------------
+# Training loop
+# ---------------------------------------------------------------------------
+training:
+  num_envs: 6          # was 16 — 6-core CPU, ~1 worker per core
+  episodes: 2000000    # 1650 is ~5–8× slower than T4; 2M episodes ≈ 1–2 days
+                       # Resume with --resume to add more later
+  exp_name: laptop_ff  # separate run folder from T4 runs
+  checkpoint_interval: 2000  # more frequent saves in case of interruption
+  log_interval: 500    # log more often so you can see progress sooner
