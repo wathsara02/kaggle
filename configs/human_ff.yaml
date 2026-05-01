@@ -7,7 +7,7 @@
 # =============================================================================
 
 seed: 42
-device: cpu
+device: cuda
 
 model:
   recurrent_type: none
@@ -32,10 +32,10 @@ algo:
 
 training:
   episodes: 3000000
-  num_envs: 1
+  num_envs: 32
   exp_name: human_ff
   log_interval: 2500
-  checkpoint_interval: 25000
+  checkpoint_interval: 10000
 
 reward_shaping:
   enabled: true
