@@ -50,9 +50,9 @@ def plot_training(csv_path, out_dir=None):
     episodes = df["episodes_completed"].values
     smooth_window = max(3, len(df) // 10)  # adapt window to how much data exists
 
-    fig = plt.figure(figsize=(16, 10))
+    fig = plt.figure(figsize=(16, 14))
     fig.suptitle("Omi MARL — Training Progress", fontsize=16, fontweight="bold")
-    gs = gridspec.GridSpec(2, 2, hspace=0.35, wspace=0.3)
+    gs = gridspec.GridSpec(3, 2, hspace=0.4, wspace=0.3)
 
     # ── 1. Win Rate ───────────────────────────────────────────────────────────
     ax1 = fig.add_subplot(gs[0, 0])
@@ -94,6 +94,9 @@ def plot_training(csv_path, out_dir=None):
                      color="royalblue",  linewidth=2.5, label="Policy loss")
             ax2.plot(sm_ep, _smooth(v_loss, smooth_window),
                      color="darkorange", linewidth=2.5, label="Value loss")
+        else:
+            ax2.plot(episodes, p_loss, color="royalblue", linewidth=1.5, label="Policy loss")
+            ax2.plot(episodes, v_loss, color="darkorange", linewidth=1.5, label="Value loss")
 
         ax2.set_title("Training Losses")
         ax2.set_xlabel("Episodes")
@@ -115,6 +118,8 @@ def plot_training(csv_path, out_dir=None):
         if len(df) >= smooth_window:
             ax3.plot(episodes[smooth_window - 1:], _smooth(entropy, smooth_window),
                      color="seagreen", linewidth=2.5, label="Entropy")
+        else:
+            ax3.plot(episodes, entropy, color="seagreen", linewidth=1.5, label="Entropy")
         ax3.set_title("Policy Entropy  (↓ = more deterministic)")
         ax3.set_xlabel("Episodes")
         ax3.set_ylabel("Entropy (nats)")
@@ -146,10 +151,42 @@ def plot_training(csv_path, out_dir=None):
     ax4.grid(True, alpha=0.3)
 
     # ── Save ──────────────────────────────────────────────────────────────────
+    ax5 = fig.add_subplot(gs[2, :])
+    event_cols = [
+        ("partner_save_events", "Partner saves"),
+        ("trump_cut_events", "Trump cuts"),
+        ("wasted_trump_events", "Wasted trump"),
+        ("late_trick_events", "Late tricks"),
+        ("declarer_team_win_events", "Declarer team wins"),
+        ("declarer_team_loss_events", "Declarer team losses"),
+    ]
+    plotted_events = False
+    for col, label in event_cols:
+        if col in df.columns:
+            values = df[col].fillna(0).values.astype(float)
+            rates = np.where(block_eps > 0, values / block_eps, 0.0)
+            if len(df) >= smooth_window:
+                ax5.plot(episodes[smooth_window - 1:], _smooth(rates, smooth_window),
+                         linewidth=2, label=label)
+            else:
+                ax5.plot(episodes, rates, linewidth=1.5, label=label)
+            plotted_events = True
+
+    if plotted_events:
+        ax5.set_title("Reward-Shaping Events per Episode")
+        ax5.set_xlabel("Episodes")
+        ax5.set_ylabel("Events / episode")
+        ax5.legend(fontsize=8, ncol=3)
+        ax5.grid(True, alpha=0.3)
+    else:
+        ax5.text(0.5, 0.5, "Reward-shaping event data not in CSV.",
+                 ha="center", va="center", transform=ax5.transAxes, fontsize=10, color="gray")
+        ax5.set_title("Reward-Shaping Events")
+
     out_path = out_dir / "training_progress.png"
     fig.savefig(out_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
-    print(f"[PLOT] Saved → {out_path}")
+    print(f"[PLOT] Saved -> {out_path}")
     return out_path
 
 

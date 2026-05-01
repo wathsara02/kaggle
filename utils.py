@@ -32,6 +32,19 @@ def ensure_dir(path):
 
 def write_csv_row(path: str, headers: Tuple[str, ...], row: Dict[str, object]):
     file_exists = os.path.exists(path)
+    if file_exists:
+        with open(path, "r", newline="") as f:
+            reader = csv.reader(f)
+            existing_headers = next(reader, None)
+        if existing_headers != list(headers):
+            base = Path(path)
+            idx = 1
+            backup = base.with_name(f"{base.stem}.legacy_{idx}{base.suffix}")
+            while backup.exists():
+                idx += 1
+                backup = base.with_name(f"{base.stem}.legacy_{idx}{base.suffix}")
+            os.replace(path, backup)
+            file_exists = False
     with open(path, "a", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=headers)
         if not file_exists:
@@ -91,13 +104,33 @@ def load_config(path: str) -> dict:
     with open(default_path, "r") as f:
         cfg = yaml.safe_load(f)
 
-    target = Path(path).resolve()
+    target = Path(path)
+    if not target.is_absolute() and not target.exists():
+        target = _here / target
+    target = target.resolve()
     if target != default_path:
         with open(target, "r") as f:
             override = yaml.safe_load(f)
         if override:
             cfg = _deep_merge(cfg, override)
     return cfg
+
+
+def clean_state_dict(state_dict: dict) -> dict:
+    """Strip wrappers commonly added by torch.compile or DataParallel."""
+    prefixes = ("_orig_mod.", "module.")
+    cleaned = {}
+    for key, value in state_dict.items():
+        new_key = key
+        changed = True
+        while changed:
+            changed = False
+            for prefix in prefixes:
+                if new_key.startswith(prefix):
+                    new_key = new_key[len(prefix):]
+                    changed = True
+        cleaned[new_key] = value
+    return cleaned
 
 
 def build_policy(cfg: dict, device: torch.device):

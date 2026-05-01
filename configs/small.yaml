@@ -11,6 +11,7 @@ algo:
   batch_size: 64
 training:
   episodes: 20
+  num_envs: 1
   exp_name: small_cpu_demo
 reward_shaping:
   enabled: true

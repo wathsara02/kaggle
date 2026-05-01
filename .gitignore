@@ -55,6 +55,7 @@ ENV/
 # My project specific
 runs/
 artifacts/
+artifacts_smoke/
 *.pt
 *.csv
 test_results.txt

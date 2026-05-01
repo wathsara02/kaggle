@@ -17,6 +17,7 @@ from omi_env import rules, encoding
 from utils import (
     build_policy,
     bootstrap_confidence_interval,
+    clean_state_dict,
     ensure_dir,
     get_device,
     load_config,
@@ -33,7 +34,7 @@ def load_policy(cfg: dict, device: torch.device, weights: str):
         print(f"[EVAL] Loaded from full checkpoint (episode {ckpt.get('episode', '?')})")
     else:
         state_dict = ckpt
-    policy.load_state_dict(state_dict)
+    policy.load_state_dict(clean_state_dict(state_dict))
     policy.eval()
     return policy
 
@@ -110,6 +111,7 @@ def main():
     run_dir = Path("runs") / exp_name
     ensure_dir(run_dir)
     csv_path = run_dir / "evaluation_summary.csv"
+    match_csv_path = run_dir / "evaluation_match_traces.csv"
 
     wins_agent = 0
     wins_baseline = 0
@@ -171,6 +173,36 @@ def main():
         block_stats["illegal"] += info.get("illegal_actions", 0)
         block_stats["count"] += 1
 
+        shaping_events = info.get("shaping_events", {})
+        match_headers = (
+            "episode",
+            "winner_team",
+            "final_score",
+            "episode_length",
+            "illegal_actions",
+            "partner_save_events",
+            "trump_cut_events",
+            "wasted_trump_events",
+            "late_trick_events",
+            "declarer_team_win_events",
+            "declarer_team_loss_events",
+            "match_trace",
+        )
+        write_csv_row(match_csv_path, match_headers, {
+            "episode": ep + 1,
+            "winner_team": winner,
+            "final_score": info.get("final_score", ""),
+            "episode_length": info.get("episode_length", 0),
+            "illegal_actions": info.get("illegal_actions", 0),
+            "partner_save_events": shaping_events.get("partner_save", 0),
+            "trump_cut_events": shaping_events.get("trump_cut", 0),
+            "wasted_trump_events": shaping_events.get("wasted_trump", 0),
+            "late_trick_events": shaping_events.get("late_trick", 0),
+            "declarer_team_win_events": shaping_events.get("declarer_team_win", 0),
+            "declarer_team_loss_events": shaping_events.get("declarer_team_loss", 0),
+            "match_trace": info.get("match_trace", ""),
+        })
+
         if block_stats["count"] >= block_size or ep == total_eps - 1:
             progress = int(((ep + 1) / total_eps) * 100)
             log_block(
@@ -189,6 +221,11 @@ def main():
     avg_len = sum(lengths) / len(lengths) if lengths else 0.0
     decisive = wins_agent + wins_baseline
     ci_low, ci_high = bootstrap_confidence_interval(win_flags) if win_flags else (0.0, 0.0)
+    decisive_rate = (
+        f"Win rate among decisive games: {(wins_agent / decisive * 100):.1f}%\n"
+        if decisive > 0
+        else ""
+    )
     print(
         "[EVALUATION — 100% COMPLETE]\n"
         f"Episodes evaluated: {total_eps}\n"
@@ -198,7 +235,7 @@ def main():
         f"Learned agent win rate: {(wins_agent / total_eps) * 100:.1f}%\n"
         f"Baseline win rate: {(wins_baseline / total_eps) * 100:.1f}%\n"
         f"Draw rate: {(draws_total / total_eps) * 100:.1f}%\n"
-        f"Win rate among decisive games: {(wins_agent / decisive * 100):.1f}%\n" if decisive > 0 else ""
+        f"{decisive_rate}"
         f"Avg episode length: {avg_len:.1f}\n"
         f"Illegal actions: {illegal_total}\n"
         f"Win rate 95% CI (decisive only): ({ci_low:.3f}, {ci_high:.3f})"

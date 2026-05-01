@@ -11,7 +11,7 @@ import torch
 import yaml
 
 from omi_env import rules, encoding
-from utils import build_policy, ensure_dir, get_device, load_config
+from utils import build_policy, clean_state_dict, ensure_dir, get_device, load_config
 
 
 def main():
@@ -24,7 +24,8 @@ def main():
     cfg = load_config(args.config)
     device = get_device(cfg.get("device", "cpu") == "cuda")
     policy, obs_dim, history_dim = build_policy(cfg, device)
-    policy.load_state_dict(torch.load(args.weights, map_location=device, weights_only=True))
+    state_dict = torch.load(args.weights, map_location=device, weights_only=True)
+    policy.load_state_dict(clean_state_dict(state_dict))
     policy.eval()
 
     out_dir = Path(args.output_dir or cfg.get("export", {}).get("output_dir", "artifacts"))

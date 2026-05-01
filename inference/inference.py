@@ -13,8 +13,8 @@ from typing import Optional, Tuple
 import torch
 
 from models.policy import PolicyNet
-from omi_env import rules
-from utils import get_device
+from omi_env import encoding, rules
+from utils import clean_state_dict, get_device
 
 
 class InferenceAgent:
@@ -68,7 +68,8 @@ def load_agent(weights_path: str, config_path: str, device: Optional[torch.devic
         action_dim=cfg["action_dim"],
         hidden_size=cfg["model"].get("recurrent_hidden_size", 128),
         recurrent_type=cfg["model"]["recurrent_type"],
+        hist_feat_dim=encoding.HISTORY_FEAT_DIM,
     )
     state_dict = torch.load(weights_path, map_location=device, weights_only=True)
-    policy.load_state_dict(state_dict)
+    policy.load_state_dict(clean_state_dict(state_dict))
     return InferenceAgent(policy, device)

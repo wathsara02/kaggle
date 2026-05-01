@@ -113,6 +113,10 @@ class MAPPOTrainer:
             env.reset()
         else:
             env.reset()
+        last_cumulative_rewards = [
+            {f"player_{j}": 0.0 for j in range(4)}
+            for _ in range(num_envs)
+        ]
         active_envs = list(range(num_envs))
         episode_infos = []
 
@@ -243,21 +247,24 @@ class MAPPOTrainer:
             # ── Assign rewards and handle episode completion ───────────────────
             next_active_envs = []
             for i, env_idx in enumerate(active_envs):
-                a_id = agent_ids[i]
+                current_rewards = cumulative_rewards_list[i]
+                reward_deltas = {
+                    j: current_rewards.get(f"player_{j}", 0.0)
+                    - last_cumulative_rewards[env_idx].get(f"player_{j}", 0.0)
+                    for j in range(4)
+                }
+                last_cumulative_rewards[env_idx] = dict(current_rewards)
 
-                # Only update reward for slots where we added a buffer entry
-                if i in pol_slots_set and buffers[env_idx].storage[a_id]:
-                    buffers[env_idx].storage[a_id][-1]["reward"] = (
-                        cumulative_rewards_list[i].get(agent_names[i], 0.0)
-                    )
+                # Team rewards can be granted to non-acting agents. Credit each
+                # trained agent's latest transition with the reward delta since
+                # the previous environment step.
+                for rewarded_agent_id, reward_delta in reward_deltas.items():
+                    if buffers[env_idx].storage[rewarded_agent_id]:
+                        buffers[env_idx].storage[rewarded_agent_id][-1]["reward"] += reward_delta
 
                 done = all(terminations_list[i].values())
                 if done:
-                    final_rewards = {
-                        j: cumulative_rewards_list[i].get(f"player_{j}", 0.0)
-                        for j in range(4)
-                    }
-                    buffers[env_idx].finalize(final_rewards)
+                    buffers[env_idx].finalize({})
                     if is_vector:
                         episode_infos.append(
                             next(iter(env.get_infos([env_idx])[0].values()), {})
@@ -280,11 +287,16 @@ class MAPPOTrainer:
     def update(self, transitions: List[dict]):
         if not transitions:
             return {"policy_loss": 0.0, "value_loss": 0.0, "entropy": 0.0}
-        # Pin memory on CPU first then transfer non-blocking for better GPU pipeline overlap
-        obs        = torch.from_numpy(np.array([t["obs"]          for t in transitions])).float().pin_memory().to(self.device, non_blocking=True)
-        hist       = torch.from_numpy(np.array([t["history"]      for t in transitions])).float().pin_memory().to(self.device, non_blocking=True)
-        masks      = torch.from_numpy(np.array([t["action_mask"]  for t in transitions])).float().pin_memory().to(self.device, non_blocking=True)
-        states     = torch.from_numpy(np.array([t["central_state"] for t in transitions])).float().pin_memory().to(self.device, non_blocking=True)
+        def batch_tensor(key: str) -> torch.Tensor:
+            tensor = torch.from_numpy(np.array([t[key] for t in transitions])).float()
+            if self.device.type == "cuda":
+                tensor = tensor.pin_memory()
+            return tensor.to(self.device, non_blocking=(self.device.type == "cuda"))
+
+        obs        = batch_tensor("obs")
+        hist       = batch_tensor("history")
+        masks      = batch_tensor("action_mask")
+        states     = batch_tensor("central_state")
         actions    = torch.tensor([t["action"]   for t in transitions], dtype=torch.long,  device=self.device)
         old_logprobs = torch.tensor([t["logprob"] for t in transitions], dtype=torch.float32, device=self.device)
         returns    = torch.tensor([t["return"]   for t in transitions], dtype=torch.float32, device=self.device)

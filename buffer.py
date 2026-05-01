@@ -19,7 +19,6 @@ class AgentBuffer:
         for agent_id, transitions in self.storage.items():
             if not transitions:
                 continue
-            transitions[-1]["reward"] = final_rewards.get(agent_id, transitions[-1]["reward"])
             transitions[-1]["done"] = True
 
     def compute_advantages(self):

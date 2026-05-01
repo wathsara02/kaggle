@@ -29,6 +29,12 @@ DEFAULT_REWARDS = {
     "declarer_bonus": 0.1,
     "cap_penalty": -0.5,              # BUG FIX: was +0.5 (positive penalty is a reward!)
     "trump_quality_bonus": 0.2,       # Immediate reward for picking the suit you hold most of
+    "declarer_team_win_bonus": 0.0,
+    "declarer_team_loss_penalty": 0.0,
+    "late_trick_reward": 0.0,
+    "trump_cut_reward": 0.0,
+    "wasted_trump_penalty": 0.0,
+    "partner_save_reward": 0.0,
 }
 
 
@@ -91,6 +97,14 @@ class OmiEnv(AECEnv):
         self._illegal_actions = 0
         self.episode_length = 0
         self._trump_quality: float = 0.0
+        self._shaping_events = {
+            "partner_save": 0,
+            "trump_cut": 0,
+            "wasted_trump": 0,
+            "late_trick": 0,
+            "declarer_team_win": 0,
+            "declarer_team_loss": 0,
+        }
         self._init_selector(start=self.start_player)
         self.rewards = {agent: 0.0 for agent in self.agents}
         self._cumulative_rewards = {agent: 0.0 for agent in self.agents}
@@ -222,6 +236,40 @@ class OmiEnv(AECEnv):
             is_trump, card_idx = encoding.decode_action(action)
             if is_trump:
                 raise ValueError("Trump action after trump selection is illegal")
+
+            pre_trick = list(self.current_trick)
+            pre_lead_suit = self.lead_suit
+            card_obj = rules.index_to_card(card_idx)
+
+            if self.reward_shaping and pre_trick:
+                current_winner = rules.resolve_trick(pre_trick, pre_lead_suit, self.trump_suit)
+                actual_temp_trick = pre_trick + [(agent_id, card_idx)]
+                actual_temp_winner = rules.resolve_trick(actual_temp_trick, pre_lead_suit, self.trump_suit)
+                partner_winning = (
+                    current_winner != agent_id
+                    and rules.team_for_player(current_winner) == rules.team_for_player(agent_id)
+                )
+
+                if partner_winning:
+                    legal_actions = [i for i, v in enumerate(self._action_mask(agent_id)) if v == 1 and i < rules.NUM_CARDS]
+                    had_overtake = any(
+                        rules.resolve_trick(pre_trick + [(agent_id, la)], pre_lead_suit, self.trump_suit) == agent_id
+                        for la in legal_actions
+                    )
+                    if had_overtake and actual_temp_winner == current_winner:
+                        self.rewards[agent] += self.rewards_cfg.get("partner_save_reward", 0.0)
+                        self._shaping_events["partner_save"] += 1
+
+                if (
+                    self.trump_suit is not None
+                    and pre_lead_suit is not None
+                    and pre_lead_suit != self.trump_suit
+                    and card_obj.suit == self.trump_suit
+                    and (actual_temp_winner != agent_id or partner_winning)
+                ):
+                    self.rewards[agent] += self.rewards_cfg.get("wasted_trump_penalty", 0.0)
+                    self._shaping_events["wasted_trump"] += 1
+
             # Remove card from hand
             try:
                 self.hands[agent_id].remove(card_idx)
@@ -237,6 +285,8 @@ class OmiEnv(AECEnv):
             # Resolve trick if complete
             if len(self.current_trick) == 4:
                 winner = rules.resolve_trick(self.current_trick, self.lead_suit, self.trump_suit)
+                winning_card = next(card for player, card in self.current_trick if player == winner)
+                winning_card_obj = rules.index_to_card(winning_card)
                 team = rules.team_for_player(winner)
                 if team == 0:
                     self.tricks_won = (self.tricks_won[0] + 1, self.tricks_won[1])
@@ -249,6 +299,21 @@ class OmiEnv(AECEnv):
                     for ag_id, ag_name in enumerate(self.agents):
                         if rules.team_for_player(ag_id) == team_winning:
                             self.rewards[ag_name] += self.rewards_cfg["trick_reward"]
+
+                    trick_number = sum(self.tricks_won)
+                    if trick_number >= 6:
+                        for ag_id, ag_name in enumerate(self.agents):
+                            if rules.team_for_player(ag_id) == team_winning:
+                                self.rewards[ag_name] += self.rewards_cfg.get("late_trick_reward", 0.0)
+                        self._shaping_events["late_trick"] += 1
+
+                    if (
+                        self.trump_suit is not None
+                        and self.lead_suit != self.trump_suit
+                        and winning_card_obj.suit == self.trump_suit
+                    ):
+                        self.rewards[self.agents[winner]] += self.rewards_cfg.get("trump_cut_reward", 0.0)
+                        self._shaping_events["trump_cut"] += 1
 
                 self.current_trick = []
                 self.lead_suit = None
@@ -267,6 +332,7 @@ class OmiEnv(AECEnv):
         if self._terminated:
             winner_team = rules.compute_winner(self.tricks_won)
             declarer_id = (self.start_player - 1) % 4
+            declarer_team = rules.team_for_player(declarer_id)
             trump_str = self.trump_suit
             tricks_str = []
             for i in range(0, len(self.history), 4):
@@ -312,7 +378,14 @@ class OmiEnv(AECEnv):
                             reward += self.rewards_cfg["cap_penalty"]
                     else:
                         reward = -1.0
-                self.rewards[ag] = reward
+                if self.reward_shaping and winner_team != -1 and ag_team == declarer_team:
+                    if winner_team == declarer_team:
+                        reward += self.rewards_cfg.get("declarer_team_win_bonus", 0.0)
+                        self._shaping_events["declarer_team_win"] += 1
+                    else:
+                        reward += self.rewards_cfg.get("declarer_team_loss_penalty", 0.0)
+                        self._shaping_events["declarer_team_loss"] += 1
+                self.rewards[ag] += reward
                 self.terminations[ag] = True
                 self.infos[ag] = {
                     "winner_team": winner_team,
@@ -320,6 +393,7 @@ class OmiEnv(AECEnv):
                     "episode_length": self.episode_length,
                     "illegal_actions": self._illegal_actions,
                     "match_trace": trace_str,
+                    "shaping_events": dict(self._shaping_events),
                 }
         
         self._accumulate_rewards()

@@ -1,0 +1,74 @@
+# =============================================================================
+# HUMAN-PLAY TARGET CONFIG
+# First serious baseline for an Omi agent intended to play against humans.
+#
+# This uses the feed-forward policy because that path is currently the most
+# reliable in this repo. Train LSTM later after adding sequence-aware PPO tests.
+# =============================================================================
+
+seed: 42
+device: cpu
+
+model:
+  recurrent_type: none
+  recurrent_hidden_size: 256
+  critic_hidden_size: 256
+
+algo:
+  lr: 0.0003
+  lr_min: 0.00001
+  lr_annealing: true
+  clip_range: 0.2
+  entropy_coef: 0.04
+  entropy_coef_end: 0.008
+  value_coef: 0.5
+  gae_lambda: 0.95
+  gamma: 0.99
+  batch_size: 4096
+  ppo_epochs: 8
+  max_grad_norm: 0.5
+  # Mix in rule opponents, but leave enough self-play for non-rule strategies.
+  rule_mix_prob: 0.35
+
+training:
+  episodes: 3000000
+  num_envs: 1
+  exp_name: human_ff
+  log_interval: 2500
+  checkpoint_interval: 25000
+
+reward_shaping:
+  enabled: true
+  # Keep rule-related penalties small; action masks already prevent illegal play.
+  illegal_action_penalty: -0.1
+  # Discourages stealing from partner when partner is already winning.
+  overplay_penalty: -0.12
+  # Small dense signal. Terminal win/loss should remain the main objective.
+  trick_reward: 0.04
+  # Reward decisive wins/losses, but do not let caps dominate all learning.
+  cap_bonus: 0.4
+  cap_penalty: -0.4
+  # Useful early signal for trump selection, kept modest to avoid myopic trump calls.
+  declarer_bonus: 0.05
+  trump_quality_bonus: 0.12
+  declarer_team_win_bonus: 0.2
+  declarer_team_loss_penalty: -0.2
+  late_trick_reward: 0.03
+  trump_cut_reward: 0.05
+  wasted_trump_penalty: -0.05
+  partner_save_reward: 0.02
+
+logging:
+  # Full game traces are useful for a report, but huge for multi-million episode
+  # runs. Keep this on for eval/report runs, or use record_every to sample.
+  record_matches: true
+  record_every: 100
+  max_recorded_matches: 5000
+
+eval:
+  episodes: 1000
+  baseline: rule
+  deterministic: true
+
+export:
+  output_dir: artifacts

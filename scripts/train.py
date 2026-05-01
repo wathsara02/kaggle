@@ -18,7 +18,6 @@ from omi_env.env import OmiEnv
 from omi_env import rules, encoding
 from utils import build_policy, ensure_dir, get_device, load_config, set_seed, write_csv_row
 from marl.vector_env import CloudVectorEnv
-from scripts.plot_training import plot_training
 from functools import partial
 
 # ── T4 GPU performance flags ──────────────────────────────────────────────────
@@ -74,8 +73,18 @@ def build_trainer(cfg: dict, device: torch.device):
     return trainer, env
 
 
+SHAPING_EVENT_KEYS = (
+    "partner_save",
+    "trump_cut",
+    "wasted_trump",
+    "late_trick",
+    "declarer_team_win",
+    "declarer_team_loss",
+)
+
+
 def log_block(progress_pct, episodes_done, total_episodes, block_count, team_a, team_b,
-              lengths, illegal_actions, csv_path, sample_traces, losses=None):
+              lengths, illegal_actions, csv_path, sample_traces, losses=None, shaping_events=None):
     avg_len = sum(lengths) / len(lengths) if lengths else 0.0
     team_a_rate = (team_a / block_count) * 100 if block_count > 0 else 0.0
     team_b_rate = (team_b / block_count) * 100 if block_count > 0 else 0.0
@@ -107,10 +116,17 @@ def log_block(progress_pct, episodes_done, total_episodes, block_count, team_a, 
         "policy_loss",
         "value_loss",
         "entropy",
+        "partner_save_events",
+        "trump_cut_events",
+        "wasted_trump_events",
+        "late_trick_events",
+        "declarer_team_win_events",
+        "declarer_team_loss_events",
         "sample_1",
         "sample_2",
         "sample_3",
     )
+    shaping_events = shaping_events or {}
     row = {
         "progress_pct": progress_pct,
         "episodes_completed": episodes_done,
@@ -124,6 +140,12 @@ def log_block(progress_pct, episodes_done, total_episodes, block_count, team_a, 
         "policy_loss": round(policy_loss, 6),
         "value_loss":  round(value_loss,  6),
         "entropy":     round(entropy,     6),
+        "partner_save_events": shaping_events.get("partner_save", 0),
+        "trump_cut_events": shaping_events.get("trump_cut", 0),
+        "wasted_trump_events": shaping_events.get("wasted_trump", 0),
+        "late_trick_events": shaping_events.get("late_trick", 0),
+        "declarer_team_win_events": shaping_events.get("declarer_team_win", 0),
+        "declarer_team_loss_events": shaping_events.get("declarer_team_loss", 0),
         "sample_1": sample_traces[0] if len(sample_traces) > 0 else "",
         "sample_2": sample_traces[1] if len(sample_traces) > 1 else "",
         "sample_3": sample_traces[2] if len(sample_traces) > 2 else "",
@@ -135,8 +157,8 @@ def save_checkpoint(path: Path, trainer, ep: int, totals: dict):
     """Save full training state so we can resume later."""
     torch.save({
         "episode": ep,
-        "policy_state_dict": trainer.policy.state_dict(),
-        "critic_state_dict": trainer.critic.state_dict(),
+        "policy_state_dict": model_state_dict(trainer.policy),
+        "critic_state_dict": model_state_dict(trainer.critic),
         "optimizer_pi_state_dict": trainer.optimizer_pi.state_dict(),
         "optimizer_v_state_dict": trainer.optimizer_v.state_dict(),
         "totals": {
@@ -149,6 +171,11 @@ def save_checkpoint(path: Path, trainer, ep: int, totals: dict):
         },
     }, path)
     print(f"[CHECKPOINT] Saved to {path} (episode {ep})")
+
+
+def model_state_dict(model):
+    """Return a loadable state dict, unwrapping torch.compile modules if needed."""
+    return getattr(model, "_orig_mod", model).state_dict()
 
 
 def load_checkpoint(path: Path, trainer):
@@ -195,11 +222,17 @@ def main():
     total_episodes = cfg["training"]["episodes"]
     ckpt_1_3 = total_episodes // 3
     ckpt_2_3 = (total_episodes * 2) // 3
-    block_size = 10
+    block_size = max(1, int(cfg["training"].get("log_interval", 10)))
     exp_name = cfg["training"].get("exp_name", "default_run")
     run_dir = Path("runs") / exp_name
     ensure_dir(run_dir)
     csv_path = run_dir / "training_summary.csv"
+    match_csv_path = run_dir / "match_traces.csv"
+    logging_cfg = cfg.get("logging", {})
+    record_matches = logging_cfg.get("record_matches", False)
+    record_every = max(1, int(logging_cfg.get("record_every", 1)))
+    max_recorded_matches = int(logging_cfg.get("max_recorded_matches", 0))
+    recorded_matches = 0
 
     # How often (in episodes) to save a resumable checkpoint
     checkpoint_interval = cfg["training"].get("checkpoint_interval", 1000)
@@ -207,7 +240,8 @@ def main():
 
     totals = {"team_a": 0, "team_b": 0, "lengths": [], "illegal": 0}
     block_stats = {"team_a": 0, "team_b": 0, "lengths": [], "illegal": 0, "count": 0, "traces": [],
-                   "policy_loss": 0.0, "value_loss": 0.0, "entropy": 0.0, "updates": 0}
+                   "policy_loss": 0.0, "value_loss": 0.0, "entropy": 0.0, "updates": 0,
+                   "shaping_events": {key: 0 for key in SHAPING_EVENT_KEYS}}
 
     ep = 0
     num_envs = getattr(env, "num_envs", 1)
@@ -250,7 +284,8 @@ def main():
         if not isinstance(infos, list):
             infos = [infos]
 
-        for info in infos:
+        for info_idx, info in enumerate(infos, start=1):
+            episodes_done = min(ep + info_idx, total_episodes)
             winner = info.get("winner_team", -1)
             if winner == 0:
                 totals["team_a"] += 1
@@ -271,9 +306,48 @@ def main():
             trace = info.get("match_trace")
             if trace and len(block_stats["traces"]) < 3:
                 block_stats["traces"].append(trace)
+            shaping_events = info.get("shaping_events", {})
+            for key in SHAPING_EVENT_KEYS:
+                block_stats["shaping_events"][key] += int(shaping_events.get(key, 0))
 
-            if block_stats["count"] >= block_size or ep + block_stats["count"] >= total_episodes:
-                progress = int(((ep + block_stats["count"]) / total_episodes) * 100)
+            if (
+                record_matches
+                and trace
+                and episodes_done % record_every == 0
+                and (max_recorded_matches <= 0 or recorded_matches < max_recorded_matches)
+            ):
+                match_headers = (
+                    "episode",
+                    "winner_team",
+                    "final_score",
+                    "episode_length",
+                    "illegal_actions",
+                    "partner_save_events",
+                    "trump_cut_events",
+                    "wasted_trump_events",
+                    "late_trick_events",
+                    "declarer_team_win_events",
+                    "declarer_team_loss_events",
+                    "match_trace",
+                )
+                write_csv_row(match_csv_path, match_headers, {
+                    "episode": episodes_done,
+                    "winner_team": winner,
+                    "final_score": info.get("final_score", ""),
+                    "episode_length": length,
+                    "illegal_actions": illegal,
+                    "partner_save_events": shaping_events.get("partner_save", 0),
+                    "trump_cut_events": shaping_events.get("trump_cut", 0),
+                    "wasted_trump_events": shaping_events.get("wasted_trump", 0),
+                    "late_trick_events": shaping_events.get("late_trick", 0),
+                    "declarer_team_win_events": shaping_events.get("declarer_team_win", 0),
+                    "declarer_team_loss_events": shaping_events.get("declarer_team_loss", 0),
+                    "match_trace": trace,
+                })
+                recorded_matches += 1
+
+            if block_stats["count"] >= block_size or episodes_done >= total_episodes:
+                progress = int((episodes_done / total_episodes) * 100)
                 n_updates = max(block_stats["updates"], 1)
                 avg_losses = {
                     "policy_loss": block_stats["policy_loss"] / n_updates,
@@ -282,7 +356,7 @@ def main():
                 }
                 log_block(
                     progress,
-                    min(ep + block_stats["count"], total_episodes),
+                    episodes_done,
                     total_episodes,
                     block_stats["count"],
                     block_stats["team_a"],
@@ -292,9 +366,11 @@ def main():
                     csv_path,
                     block_stats["traces"],
                     losses=avg_losses,
+                    shaping_events=block_stats["shaping_events"],
                 )
                 block_stats = {"team_a": 0, "team_b": 0, "lengths": [], "illegal": 0, "count": 0, "traces": [],
-                               "policy_loss": 0.0, "value_loss": 0.0, "entropy": 0.0, "updates": 0}
+                               "policy_loss": 0.0, "value_loss": 0.0, "entropy": 0.0, "updates": 0,
+                               "shaping_events": {key: 0 for key in SHAPING_EVENT_KEYS}}
 
         # BUG FIX (Bug 3): increment by actual completed episodes, not assumed parallel count.
         # With num_envs=16, ep jumped by 16 each iteration regardless of how many episodes
@@ -327,19 +403,23 @@ def main():
                 last_frozen_update_ep = ep
 
         if ep >= ckpt_1_3 and (ep - ep_step) < ckpt_1_3:
-            torch.save(trainer.policy.state_dict(), run_dir / "policy_1_3.pt")
-            torch.save(trainer.critic.state_dict(), run_dir / "critic_1_3.pt")
+            torch.save(model_state_dict(trainer.policy), run_dir / "policy_1_3.pt")
+            torch.save(model_state_dict(trainer.critic), run_dir / "critic_1_3.pt")
             print(f"Saved 1/3 checkpoint at episode {ep}")
         elif ep >= ckpt_2_3 and (ep - ep_step) < ckpt_2_3:
-            torch.save(trainer.policy.state_dict(), run_dir / "policy_2_3.pt")
-            torch.save(trainer.critic.state_dict(), run_dir / "critic_2_3.pt")
+            torch.save(model_state_dict(trainer.policy), run_dir / "policy_2_3.pt")
+            torch.save(model_state_dict(trainer.critic), run_dir / "critic_2_3.pt")
             print(f"Saved 2/3 checkpoint at episode {ep}")
 
         # ── Periodic plot save (every 5000 episodes) ──────────────────────────
         prev_plot = (ep - ep_step) // 5000
         curr_plot = ep // 5000
         if curr_plot > prev_plot:
-            plot_training(csv_path, run_dir)
+            try:
+                from scripts.plot_training import plot_training
+                plot_training(csv_path, run_dir)
+            except ImportError as exc:
+                print(f"[PLOT] Skipped plot update: {exc}")
 
         # ── Periodic resumable checkpoint ──────────────────────────────────────
         prev_interval = (ep - ep_step) // checkpoint_interval
@@ -361,12 +441,12 @@ def main():
     )
 
     # Save latest weights
-    torch.save(trainer.policy.state_dict(), run_dir / "policy_last.pt")
-    torch.save(trainer.critic.state_dict(), run_dir / "critic_last.pt")
+    torch.save(model_state_dict(trainer.policy), run_dir / "policy_last.pt")
+    torch.save(model_state_dict(trainer.critic), run_dir / "critic_last.pt")
     
     # Save the 3/3 checkpoint
-    torch.save(trainer.policy.state_dict(), run_dir / "policy_3_3.pt")
-    torch.save(trainer.critic.state_dict(), run_dir / "critic_3_3.pt")
+    torch.save(model_state_dict(trainer.policy), run_dir / "policy_3_3.pt")
+    torch.save(model_state_dict(trainer.critic), run_dir / "critic_3_3.pt")
 
 
 if __name__ == "__main__":
