@@ -102,7 +102,12 @@ def main():
     set_seed(cfg["seed"])
     device = get_device(cfg.get("device", "cpu") == "cuda")
     policy = load_policy(cfg, device, args.weights)
-    env = OmiEnv(seed=cfg["seed"])
+    reward_cfg = cfg.get("reward_shaping", {})
+    env = OmiEnv(
+        seed=cfg["seed"],
+        reward_shaping=reward_cfg.get("enabled", False),
+        rewards_dict=reward_cfg,
+    )
     baseline_agent = RuleBasedAgent() if args.baseline == "rule" else RandomLegalAgent()
 
     total_eps = args.episodes

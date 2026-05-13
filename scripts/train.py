@@ -2,8 +2,10 @@ import argparse
 import math
 import os
 import sys
+import time
 from collections import deque
 from pathlib import Path
+from typing import Optional
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
@@ -155,10 +157,12 @@ def log_block(progress_pct, episodes_done, total_episodes, block_count, team_a, 
 
 def save_checkpoint(path: Path, trainer, ep: int, totals: dict):
     """Save full training state so we can resume later."""
+    policy_state = model_state_dict(trainer.policy)
+    critic_state = model_state_dict(trainer.critic)
     torch.save({
         "episode": ep,
-        "policy_state_dict": model_state_dict(trainer.policy),
-        "critic_state_dict": model_state_dict(trainer.critic),
+        "policy_state_dict": policy_state,
+        "critic_state_dict": critic_state,
         "optimizer_pi_state_dict": trainer.optimizer_pi.state_dict(),
         "optimizer_v_state_dict": trainer.optimizer_v.state_dict(),
         "totals": {
@@ -170,12 +174,70 @@ def save_checkpoint(path: Path, trainer, ep: int, totals: dict):
             "lengths_sum": sum(totals["lengths"]),
         },
     }, path)
+    torch.save(policy_state, path.with_name("policy_last.pt"))
+    torch.save(critic_state, path.with_name("critic_last.pt"))
     print(f"[CHECKPOINT] Saved to {path} (episode {ep})")
 
 
 def model_state_dict(model):
     """Return a loadable state dict, unwrapping torch.compile modules if needed."""
     return getattr(model, "_orig_mod", model).state_dict()
+
+
+class TrainingProgress:
+    def __init__(self, total_episodes: int, start_episode: int = 0):
+        self.total_episodes = max(1, total_episodes)
+        self.start_episode = start_episode
+        self.start_time = time.time()
+        self._last_len = 0
+
+    def _format_eta(self, seconds: float) -> str:
+        seconds = max(0, int(seconds))
+        hours, rem = divmod(seconds, 3600)
+        minutes, secs = divmod(rem, 60)
+        if hours:
+            return f"{hours:d}h {minutes:02d}m"
+        if minutes:
+            return f"{minutes:d}m {secs:02d}s"
+        return f"{secs:d}s"
+
+    def update(self, episodes_done: int, totals: dict, losses: Optional[dict] = None) -> None:
+        fraction = min(max(episodes_done / self.total_episodes, 0.0), 1.0)
+        filled = int(30 * fraction)
+        bar = "#" * filled + "-" * (30 - filled)
+
+        elapsed = time.time() - self.start_time
+        completed_since_start = episodes_done - self.start_episode
+        eps_per_sec = completed_since_start / max(elapsed, 1e-9) if completed_since_start > 0 else 0.0
+        remaining = max(self.total_episodes - episodes_done, 0)
+        eta = remaining / eps_per_sec if eps_per_sec > 0 else 0.0
+
+        decisive = totals.get("team_a", 0) + totals.get("team_b", 0)
+        team_a_rate = (totals.get("team_a", 0) / decisive * 100.0) if decisive else 0.0
+        loss_text = ""
+        if losses:
+            loss_text = (
+                f" | pi {losses.get('policy_loss', 0.0):.3f}"
+                f" v {losses.get('value_loss', 0.0):.3f}"
+                f" H {losses.get('entropy', 0.0):.3f}"
+            )
+
+        line = (
+            f"\r[{bar}] {fraction * 100:6.2f}% "
+            f"{episodes_done:,}/{self.total_episodes:,} eps "
+            f"| {eps_per_sec:6.1f} eps/s "
+            f"| ETA {self._format_eta(eta)} "
+            f"| TeamA {team_a_rate:5.1f}%"
+            f"{loss_text}"
+        )
+        padding = " " * max(0, self._last_len - len(line))
+        print(line + padding, end="", flush=True)
+        self._last_len = len(line)
+
+    def newline(self) -> None:
+        if self._last_len:
+            print()
+            self._last_len = 0
 
 
 def load_checkpoint(path: Path, trainer):
@@ -204,8 +266,20 @@ def main():
     parser.add_argument("--config", type=str, default="configs/default.yaml")
     parser.add_argument("--resume", action="store_true",
                         help="Resume from checkpoint_latest.pt in the run directory if it exists")
+    parser.add_argument("--episodes", type=int, default=None,
+                        help="Override training.episodes from the config")
+    parser.add_argument("--num-envs", type=int, default=None,
+                        help="Override training.num_envs from the config")
+    parser.add_argument("--device", type=str, default=None, choices=["cpu", "cuda", "gpu"],
+                        help="Override device from the config")
     args = parser.parse_args()
     cfg = load_config(args.config)
+    if args.episodes is not None:
+        cfg["training"]["episodes"] = args.episodes
+    if args.num_envs is not None:
+        cfg["training"]["num_envs"] = args.num_envs
+    if args.device is not None:
+        cfg["device"] = args.device
     set_seed(cfg["seed"])
     requested_device = cfg.get("device", "cpu").lower()
     prefer_cuda = requested_device in ["cuda", "gpu"]
@@ -270,6 +344,9 @@ def main():
     elif latest_ckpt_path.exists():
         print(f"[CHECKPOINT] Found {latest_ckpt_path}. Run with --resume to continue from episode {torch.load(latest_ckpt_path, map_location='cpu')['episode']}.")
 
+    progress_bar = TrainingProgress(total_episodes, start_episode=ep)
+    progress_bar.update(ep, totals)
+
     while ep < total_episodes:
         transitions, infos = trainer.collect_episode(env)
         losses = trainer.update(transitions)
@@ -283,6 +360,9 @@ def main():
 
         if not isinstance(infos, list):
             infos = [infos]
+        remaining_episodes = max(total_episodes - ep, 0)
+        if len(infos) > remaining_episodes:
+            infos = infos[:remaining_episodes]
 
         for info_idx, info in enumerate(infos, start=1):
             episodes_done = min(ep + info_idx, total_episodes)
@@ -347,6 +427,7 @@ def main():
                 recorded_matches += 1
 
             if block_stats["count"] >= block_size or episodes_done >= total_episodes:
+                progress_bar.newline()
                 progress = int((episodes_done / total_episodes) * 100)
                 n_updates = max(block_stats["updates"], 1)
                 avg_losses = {
@@ -377,6 +458,7 @@ def main():
         # finished — causing milestone checkpoints to be skipped entirely.
         ep_step = len(infos)
         ep += ep_step
+        progress_bar.update(ep, totals, losses)
 
         # ── Curriculum phase management ────────────────────────────────────────
         if curriculum_enabled:
@@ -403,10 +485,12 @@ def main():
                 last_frozen_update_ep = ep
 
         if ep >= ckpt_1_3 and (ep - ep_step) < ckpt_1_3:
+            progress_bar.newline()
             torch.save(model_state_dict(trainer.policy), run_dir / "policy_1_3.pt")
             torch.save(model_state_dict(trainer.critic), run_dir / "critic_1_3.pt")
             print(f"Saved 1/3 checkpoint at episode {ep}")
         elif ep >= ckpt_2_3 and (ep - ep_step) < ckpt_2_3:
+            progress_bar.newline()
             torch.save(model_state_dict(trainer.policy), run_dir / "policy_2_3.pt")
             torch.save(model_state_dict(trainer.critic), run_dir / "critic_2_3.pt")
             print(f"Saved 2/3 checkpoint at episode {ep}")
@@ -415,6 +499,7 @@ def main():
         prev_plot = (ep - ep_step) // 5000
         curr_plot = ep // 5000
         if curr_plot > prev_plot:
+            progress_bar.newline()
             try:
                 from scripts.plot_training import plot_training
                 plot_training(csv_path, run_dir)
@@ -425,9 +510,11 @@ def main():
         prev_interval = (ep - ep_step) // checkpoint_interval
         curr_interval = ep // checkpoint_interval
         if curr_interval > prev_interval:
+            progress_bar.newline()
             save_checkpoint(latest_ckpt_path, trainer, ep, totals)
 
     # Final summary
+    progress_bar.newline()
     total_len = sum(totals["lengths"]) / len(totals["lengths"]) if totals["lengths"] else 0.0
     print(
         "[TRAINING COMPLETE]\n"
