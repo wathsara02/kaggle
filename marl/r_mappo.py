@@ -42,18 +42,17 @@ class MAPPOTrainer:
         self.initial_lr = config["lr"]
         self.lr_min = config.get("lr_min", 1e-5)
         self.lr_annealing = config.get("lr_annealing", True)
-        # OPTIMISATION: AMP grad scaler for mixed-precision training on T4 GPU
+        # Mixed precision on CUDA.
         self._use_amp = (device.type == "cuda")
         self.scaler_pi = torch.amp.GradScaler("cuda", enabled=self._use_amp)
         self.scaler_v = torch.amp.GradScaler("cuda", enabled=self._use_amp)
-        # Curriculum training state
-        # opponent_mode: "self_play" | "random" | "frozen"
+        # Opponent mode: self_play, random, or frozen.
         self.opponent_mode: str = "self_play"
         self.frozen_policy: Optional[PolicyNet] = None
         self._random_agent = RandomLegalAgent()
 
     def set_frozen_policy(self) -> None:
-        """Snapshot current policy weights as the frozen opponent for Phase 2."""
+        """Use the current policy as a fixed opponent."""
         self.frozen_policy = copy.deepcopy(self.policy).to(self.device)
         self.frozen_policy.eval()
         for p in self.frozen_policy.parameters():
@@ -61,7 +60,7 @@ class MAPPOTrainer:
         print("[CURRICULUM] Frozen policy updated from current policy weights.")
 
     def anneal_lr(self, fraction: float) -> None:
-        """Linearly decay LR and entropy coefficient from initial values → minimums as fraction goes 0 → 1."""
+        """Decay LR and entropy over training."""
         if not self.lr_annealing:
             return
         new_lr = self.initial_lr + fraction * (self.lr_min - self.initial_lr)
@@ -69,7 +68,6 @@ class MAPPOTrainer:
             pg["lr"] = new_lr
         for pg in self.optimizer_v.param_groups:
             pg["lr"] = new_lr
-        # Decay entropy coefficient: high early (exploration) → low late (exploitation)
         self.entropy_coef = self.initial_entropy_coef + fraction * (
             self.entropy_coef_end - self.initial_entropy_coef
         )
@@ -80,10 +78,7 @@ class MAPPOTrainer:
         is_recurrent = self.policy.recurrent_type == "lstm"
         rule_agent = RuleBasedAgent()
 
-        # ── Opponent assignment per env ───────────────────────────────────────
-        # "random"  → players 1 & 3 always use RandomLegalAgent
-        # "frozen"  → players 1 & 3 always use frozen policy snapshot
-        # "self_play" → existing rule_mix_prob behaviour (diverse mixing)
+        # Pick controlled opponents for each env.
         env_opp_agents: List[set] = []
         if self.opponent_mode in ("random", "frozen"):
             env_opp_agents = [{1, 3} for _ in range(num_envs)]
@@ -103,7 +98,7 @@ class MAPPOTrainer:
 
         buffers = [AgentBuffer(self.gamma, self.gae_lambda, self.device) for _ in range(num_envs)]
 
-        # One hidden state per agent per env (meaningful only in LSTM mode)
+        # Hidden state is only used by LSTM policies.
         hidden_states = [
             {i: self.policy.init_hidden(1, self.device) for i in range(4)}
             for _ in range(num_envs)
@@ -121,7 +116,6 @@ class MAPPOTrainer:
         episode_infos = []
 
         while active_envs:
-            # ── Observe ───────────────────────────────────────────────────────
             if is_vector:
                 agent_names = env.agent_selection(active_envs)
                 obs_list = env.observe(agent_names, active_envs)
@@ -131,17 +125,15 @@ class MAPPOTrainer:
 
             agent_ids = [int(name.split("_")[1]) for name in agent_names]
 
-            # Split this batch into policy slots and opponent slots
+            # Separate trainable agents from scripted opponents.
             pol_slots  = [i for i, (ei, ai) in enumerate(zip(active_envs, agent_ids))
                           if ai not in env_opp_agents[ei]]
             opp_slots  = [i for i, (ei, ai) in enumerate(zip(active_envs, agent_ids))
                           if ai in env_opp_agents[ei]]
             pol_slots_set = set(pol_slots)
 
-            # Final action per slot (aligned with active_envs)
             final_actions: List = [None] * len(active_envs)
 
-            # ── Opponent actions ──────────────────────────────────────────────
             if self.opponent_mode == "random":
                 for i in opp_slots:
                     final_actions[i] = self._random_agent.act(obs_list[i])
@@ -156,11 +148,9 @@ class MAPPOTrainer:
                 for j, i in enumerate(opp_slots):
                     final_actions[i] = int(actions_f_np[j].item())
             else:
-                # self_play or frozen not yet set — fall back to rule-based
                 for i in opp_slots:
                     final_actions[i] = rule_agent.act(obs_list[i])
 
-            # ── Policy actions (batched forward pass) ─────────────────────────
             logprobs_map: Dict[int, float] = {}
             values_map:   Dict[int, float] = {}
             cs_map:       Dict[int, np.ndarray] = {}
@@ -192,7 +182,7 @@ class MAPPOTrainer:
                                 new_c[:, j:j+1, :].clone(),
                             )
 
-                    # BUG FIX (logprob consistency): use Categorical.log_prob
+                    # Keep actions and logprobs from the same distribution.
                     actions_pol, probs_pol = masked_sample(logits, mask_tensor, deterministic=False)
                     dist = torch.distributions.Categorical(probs_pol)
                     logprobs_pol = dist.log_prob(actions_pol)
@@ -217,7 +207,6 @@ class MAPPOTrainer:
                     values_map[i]     = values[j].item()
                     cs_map[i]         = central_states[j].cpu().numpy()
 
-            # ── Add policy transitions to buffer (rule-based → no buffer) ─────
             for i in pol_slots:
                 env_idx = active_envs[i]
                 a_id = agent_ids[i]
@@ -234,7 +223,6 @@ class MAPPOTrainer:
                     "central_state": cs_map[i],
                 })
 
-            # ── Step all envs ─────────────────────────────────────────────────
             if is_vector:
                 env.step(final_actions, active_envs)
                 cumulative_rewards_list = env.get_cumulative_rewards(active_envs)
@@ -244,7 +232,6 @@ class MAPPOTrainer:
                 cumulative_rewards_list = [env._cumulative_rewards]
                 terminations_list = [env.terminations]
 
-            # ── Assign rewards and handle episode completion ───────────────────
             next_active_envs = []
             for i, env_idx in enumerate(active_envs):
                 current_rewards = cumulative_rewards_list[i]
@@ -255,9 +242,7 @@ class MAPPOTrainer:
                 }
                 last_cumulative_rewards[env_idx] = dict(current_rewards)
 
-                # Team rewards can be granted to non-acting agents. Credit each
-                # trained agent's latest transition with the reward delta since
-                # the previous environment step.
+                # Team rewards may land on non-acting agents.
                 for rewarded_agent_id, reward_delta in reward_deltas.items():
                     if buffers[env_idx].storage[rewarded_agent_id]:
                         buffers[env_idx].storage[rewarded_agent_id][-1]["reward"] += reward_delta
@@ -276,7 +261,6 @@ class MAPPOTrainer:
 
             active_envs = next_active_envs
 
-        # ── Aggregate transitions from all buffers ────────────────────────────
         all_transitions = []
         for b in buffers:
             all_transitions.extend(b.compute_advantages())
@@ -301,7 +285,7 @@ class MAPPOTrainer:
         old_logprobs = torch.tensor([t["logprob"] for t in transitions], dtype=torch.float32, device=self.device)
         returns    = torch.tensor([t["return"]   for t in transitions], dtype=torch.float32, device=self.device)
         advantages = torch.tensor([t["advantage"] for t in transitions], dtype=torch.float32, device=self.device)
-        # Normalize advantages
+        # Stabilize PPO updates.
         advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
 
         dataset_size = len(transitions)
@@ -309,9 +293,7 @@ class MAPPOTrainer:
         ppo_epochs = self.cfg["ppo_epochs"]
         indices = np.arange(dataset_size)
         for _ in range(ppo_epochs):
-            # LSTM relies on temporal ordering within sequences; shuffling breaks
-            # the hidden-state carry-over that collection builds up, creating a
-            # train/inference mismatch. FF mode is unaffected by order so always shuffle.
+            # Keep recurrent samples ordered.
             if self.policy.recurrent_type != "lstm":
                 np.random.shuffle(indices)
             for start in range(0, dataset_size, batch_size):
@@ -327,7 +309,6 @@ class MAPPOTrainer:
                 adv_mb = advantages[mb_idx]
                 states_mb = states[mb_idx]
 
-                # Use torch.amp.autocast (torch.cuda.amp.autocast is deprecated in PyTorch 2+)
                 with torch.amp.autocast("cuda", enabled=self._use_amp):
                     logits, _ = self.policy(obs_mb, hist_mb, None, action_mask=mask_mb)
                     probs = torch.softmax(logits, dim=-1)
@@ -341,7 +322,6 @@ class MAPPOTrainer:
                     policy_loss = -torch.min(surr1, surr2).mean()
                     policy_loss_total = policy_loss - self.entropy_coef * entropy
 
-                # BUG FIX: update policy and critic separately to avoid cross-gradient contamination
                 self.optimizer_pi.zero_grad()
                 self.scaler_pi.scale(policy_loss_total).backward()
                 self.scaler_pi.unscale_(self.optimizer_pi)
@@ -351,7 +331,7 @@ class MAPPOTrainer:
 
                 with torch.amp.autocast("cuda", enabled=self._use_amp):
                     values = self.critic(states_mb)
-                    # BUG FIX: ensure values shape matches returns_mb (both 1D)
+                    # Match return shape.
                     if values.dim() > 1:
                         values = values.squeeze(-1)
                     value_loss = self.value_coef * (returns_mb - values).pow(2).mean()

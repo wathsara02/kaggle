@@ -14,7 +14,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import matplotlib
-matplotlib.use("Agg")  # non-interactive backend — safe for training loops
+matplotlib.use("Agg")  # Non-interactive backend for training loops.
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 
@@ -209,7 +209,6 @@ def plot_training(csv_path, out_dir=None):
     fig.suptitle("Omi MARL — Training Progress", fontsize=16, fontweight="bold")
     gs = gridspec.GridSpec(3, 2, hspace=0.4, wspace=0.3)
 
-    # ── 1. Win Rate ───────────────────────────────────────────────────────────
     ax1 = fig.add_subplot(gs[0, 0])
     a_rate = df["team_a_win_rate"].values
     b_rate = df["team_b_win_rate"].values if "team_b_win_rate" in df.columns else 100.0 - a_rate
@@ -232,7 +231,6 @@ def plot_training(csv_path, out_dir=None):
     ax1.legend(fontsize=8)
     ax1.grid(True, alpha=0.3)
 
-    # ── 2. Policy & Value Loss ────────────────────────────────────────────────
     ax2 = fig.add_subplot(gs[0, 1])
     has_losses = "policy_loss" in df.columns and df["policy_loss"].notna().any()
 
@@ -263,7 +261,6 @@ def plot_training(csv_path, out_dir=None):
                  ha="center", va="center", transform=ax2.transAxes, fontsize=10, color="gray")
         ax2.set_title("Training Losses")
 
-    # ── 3. Policy Entropy ─────────────────────────────────────────────────────
     ax3 = fig.add_subplot(gs[1, 0])
     has_entropy = "entropy" in df.columns and df["entropy"].notna().any()
 
@@ -285,11 +282,10 @@ def plot_training(csv_path, out_dir=None):
                  ha="center", va="center", transform=ax3.transAxes, fontsize=10, color="gray")
         ax3.set_title("Policy Entropy")
 
-    # ── 4. Illegal Actions ────────────────────────────────────────────────────
     ax4 = fig.add_subplot(gs[1, 1])
     illegal = df["illegal_actions"].values.astype(float)
     block_eps = df["block_episodes"].values.astype(float)
-    # Express as rate per episode so blocks of different sizes are comparable
+    # Normalize by block size.
     illegal_rate = np.where(block_eps > 0, illegal / block_eps, 0.0)
 
     ax4.bar(episodes, illegal_rate, width=np.diff(np.append([0], episodes)).clip(1),
@@ -305,7 +301,6 @@ def plot_training(csv_path, out_dir=None):
     ax4.legend(fontsize=8)
     ax4.grid(True, alpha=0.3)
 
-    # ── Save ──────────────────────────────────────────────────────────────────
     ax5 = fig.add_subplot(gs[2, :])
     event_cols = [
         ("partner_save_events", "Partner saves"),

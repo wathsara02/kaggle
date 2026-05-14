@@ -1,108 +1,211 @@
-# Intelligent Omi: Cooperative Multi-Agent Reinforcement Learning
+# Omi Reinforcement Learning
 
-Welcome to the **Intelligent Omi** project! This is an advanced artificial intelligence environment designed to teach agents how to master the Sri Lankan trick-taking card game, **Omi**, through deep reinforcement learning.
+This project trains a multi-agent reinforcement learning policy for Omi, the
+Sri Lankan trick-taking card game. The main workflow is:
 
-## 🌟 Project Vision
-The goal of this project is to build a cooperative AI that learns complex strategy, teamwork, and card-counting without any hard-coded rules for strategy. Using **Deep Reinforcement Learning (MAPPO)** and **Long Short-Term Memory (LSTM)**, the agents learn from purely randomized play to become expert Omi players over millions of matches.
+1. Install Python dependencies.
+2. Run a small smoke test.
+3. Train with `configs/new.yaml`.
+4. Resume training when needed.
+5. Evaluate and export the trained policy.
 
----
+## Project Layout
 
-## 🛠 Features
+```text
+configs/
+  default.yaml      Base config loaded before every other config
+  new.yaml          Main training config for this project
+  small.yaml        Fast CPU smoke-test config
 
-*   **PettingZoo AEC Environment**: A strict, turn-based referee system that enforces Omi rules (must-follow-suit, trump hierarchy).
-*   **CTDE Architecture**: "Centralized Training, Decentralized Execution." The AI is trained by an omniscient critic, but plays fair matches during execution using only its private hand and memory.
-*   **Memory-Augmented Observation**: The policy receives a full history of the last 32 moves as a structured sequence. In **LSTM mode**, this is processed step-by-step so agents reason sequentially across the hand — just like a human tracking played cards.
-*   **Action Masking**: The AI is physically blocked from making illegal moves, focusing 100% of its power on strategy.
-*   **Dense Reward System**: A toggleable, high-frequency feedback system for lightning-fast training.
+omi_env/            Omi rules, environment, and observation encoding
+models/             Policy and critic neural networks
+marl/               MAPPO trainer and vector environment
+scripts/
+  train.py          Train or resume training
+  eval.py           Evaluate a trained policy
+  eval_vs_policy.py Compare two trained policies
+  plot_training.py  Plot training CSV output
+  export.py         Export a trained policy for use elsewhere
+tests/              Pytest checks for rules and environment behavior
+```
 
----
+## Requirements
 
-## 📁 Repository Structure
+Use Python 3.10 or newer.
 
-### ⚖️ The Game Engine (`omi_env/`)
-*   `rules.py`: The core Omi logic (shuffling, dealing, trick resolution, legal move masking).
-*   `env.py`: The "Referee" wrapper. Manages turns, rewards, and the current game stage (Trump vs. Play).
-*   `encoding.py`: Translates cards and game states into numbers for the AI's neural network.
+Dependencies are listed in `requirements.txt`. It installs the CPU PyTorch
+build, which matches the current `configs/new.yaml` setup.
 
-### 🧠 The AI Brains (`models/`)
-*   `policy.py` (The Actor): Each player's decentralized brain. Supports **feed-forward** (default, fast) and **LSTM** (sequential memory, stronger) modes, switchable via config.
-*   `critic.py` (The Critic): The omniscient coach used only during training to grade plays.
+## Setup
 
-### 🎓 Training Loop (`marl/` & `scripts/`)
-*   `r_mappo.py`: The math behind the policy updates (Proximal Policy Optimization).
-*   `train.py`: The main script to start a training session.
-*   `eval.py`: Compare your trained AI against random or rule-based bots.
-*   `inference/`: Minimal scripts to run a single trained model for testing or demos.
+From the repository root:
 
----
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+```
 
-All rewards are fully tunable in `configs/default.yaml`. To use these shaped rewards, ensure `reward_shaping -> enabled: true` is set.
-
-*   **Trick Rewards (+0.1)**: Immediate feedback for winning a trick as a team.
-*   **Illegal Move Penalty (-0.1)**: Teaches the AI the game rules faster.
-*   **Over-playing Penalty (-0.05)**: Discourages wasting high cards when a teammate is already winning the trick.
-*   **Margin-based Final Wins**: Rewards are scaled by the margin of victory (e.g., winning 7-1 is better than 5-3).
-*   **Trump Declarer Bonus (+0.1)**: Incentivizes the declarer to call the most effective trump suit.
-*   **Cap Penalty (-0.5)**: A major penalty if a team loses all 8 tricks.
-
----
-
-## 🚀 Quickstart Guide
-
-### 1️⃣ Installation
-Ensure you have Python 3.10+ installed.
-```bash
+```powershell
 pip install -r requirements.txt
 ```
 
-### 2️⃣ Run Unit Tests
-Verify the environment and rules are working perfectly.
-```bash
+## Verify The Install
+
+Run the tests:
+
+```powershell
 pytest
 ```
 
-### 3️⃣ Train Your AI
-Run a fast smoke test to verify the setup:
+Run a short training smoke test:
+
 ```powershell
 python scripts/train.py --config configs/small.yaml
 ```
-Run the full training session (feed-forward, fast):
+
+`small.yaml` runs only 20 episodes on CPU. Use it to check that the code,
+dependencies, and environment are working before starting a long run.
+
+## Configs
+
+`utils.load_config()` always loads `configs/default.yaml` first. If you pass
+another config, that config is merged on top of `default.yaml`.
+
+That means `configs/default.yaml` must stay in the repo even if you normally run
+`configs/new.yaml`.
+
+Current configs:
+
+| Config | Use |
+| --- | --- |
+| `configs/default.yaml` | Base CUDA/T4 settings and shared defaults |
+| `configs/new.yaml` | Main project training config |
+| `configs/small.yaml` | Fast CPU smoke test |
+
+## Train
+
+Start the main training run:
+
 ```powershell
-python scripts/train.py --config configs/default.yaml
+python scripts/train.py --config configs/new.yaml
 ```
-Run with **LSTM for smarter agents** (recommended for best results):
+
+Resume the same run from the latest checkpoint:
+
 ```powershell
-python scripts/train.py --config configs/lstm.yaml
+python scripts/train.py --config configs/new.yaml --resume
 ```
-Agents trained with LSTM build memory within each 8-trick hand, tracking which cards opponents have played — exactly as a skilled human would.
 
-### 4️⃣ Evaluate Performance
-Compare your trained AI's win rate against a rule-based baseline:
+Useful overrides:
+
 ```powershell
-python scripts/eval.py --weights runs/lstm_cpu/policy_last.pt --episodes 100
+python scripts/train.py --config configs/new.yaml --episodes 10000
+python scripts/train.py --config configs/new.yaml --num-envs 4
+python scripts/train.py --config configs/new.yaml --device cpu
 ```
 
----
+The current `new.yaml` writes output under:
 
-## ⚙️ Configuration & Config Inheritance
+```text
+runs/local_5600g/
+```
 
-All parameters live in `configs/default.yaml`. **Partial configs** like `lstm.yaml` only specify what's *different*, and the system deep-merges them automatically:
+Important files in that folder:
 
-| Config | Purpose |
-|---|---|
-| `configs/default.yaml` | Single source of truth for ALL parameters |
-| `configs/lstm.yaml` | Override: enables LSTM memory, saves to `runs/lstm_cpu/` |
-| `configs/small.yaml` | Override: 20 episodes, for quick smoke-tests |
+| File | Purpose |
+| --- | --- |
+| `policy_last.pt` | Latest policy weights |
+| `checkpoint_latest.pt` | Resume checkpoint |
+| `training_summary.csv` | Training metrics |
+| `match_traces.csv` | Sampled match records, if enabled |
+| `baseline_evals/` | Periodic evaluation results, if enabled |
 
-**How it works:** running `--config configs/lstm.yaml` first loads *all* of `default.yaml`, then only overwrites the keys defined in `lstm.yaml`. So changing the learning rate in `default.yaml` applies to every config automatically.
+## Plot Training
 
-Key parameters to tune in `default.yaml`:
-*   Change `episodes` to train for longer.
-*   Adjust `lr` (learning rate) for faster or more stable convergence.
-*   Configure all reward values in the `reward_shaping` section.
-*   Set `enabled: true` under `reward_shaping` to use the dense feedback system.
+After training has written `training_summary.csv`, generate plots:
 
----
+```powershell
+python scripts/plot_training.py --csv runs/local_5600g/training_summary.csv
+```
 
-## 🛡️ License
-Designed for researchers and Omi enthusiasts. Built with PettingZoo and PyTorch.
+The plot script writes PNG charts next to the CSV file.
+
+## Evaluate
+
+Evaluate the trained policy against the rule-based baseline:
+
+```powershell
+python scripts/eval.py --config configs/new.yaml --weights runs/local_5600g/policy_last.pt --episodes 200 --deterministic
+```
+
+Evaluate against a random baseline:
+
+```powershell
+python scripts/eval.py --config configs/new.yaml --weights runs/local_5600g/policy_last.pt --baseline random --episodes 200
+```
+
+Evaluation results are printed in the terminal and saved under the run folder.
+
+## Compare Two Policies
+
+Use this when you have two trained policies and want them to play each other:
+
+```powershell
+python scripts/eval_vs_policy.py --weights-a runs/local_5600g/policy_last.pt --weights-b runs/local_5600g/policy_last.pt --episodes 100
+```
+
+Change `--weights-b` to the second policy you want to compare.
+
+## Export
+
+Export the trained policy and metadata:
+
+```powershell
+python scripts/export.py --config configs/new.yaml --weights runs/local_5600g/policy_last.pt --output_dir artifacts
+```
+
+This creates:
+
+```text
+artifacts/
+  policy_agent.pt
+  config.json
+  VERSION
+```
+
+## Common Commands
+
+```powershell
+# Activate the virtual environment
+.\.venv\Scripts\Activate.ps1
+
+# Run tests
+pytest
+
+# Quick smoke test
+python scripts/train.py --config configs/small.yaml
+
+# Main training
+python scripts/train.py --config configs/new.yaml
+
+# Resume training
+python scripts/train.py --config configs/new.yaml --resume
+
+# Evaluate latest policy
+python scripts/eval.py --config configs/new.yaml --weights runs/local_5600g/policy_last.pt --episodes 200 --deterministic
+
+# Plot training metrics
+python scripts/plot_training.py --csv runs/local_5600g/training_summary.csv
+
+# Export policy
+python scripts/export.py --config configs/new.yaml --weights runs/local_5600g/policy_last.pt --output_dir artifacts
+```
+
+## Notes
+
+- Keep `configs/default.yaml`; `new.yaml` depends on it through config merging.
+- Use `configs/small.yaml` before long runs to catch setup problems quickly.
+- Use `--resume` for long training sessions so work continues from
+  `checkpoint_latest.pt`.
+- On Windows with an AMD GPU, normal PyTorch does not use the GPU through CUDA.

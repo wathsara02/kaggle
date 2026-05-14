@@ -35,7 +35,7 @@ class AgentBuffer:
                 gae = delta + self.gamma * self.gae_lambda * mask * gae
                 t["advantage"] = gae
                 t["return"] = gae + value
-                next_value = value  # BUG FIX: must update AFTER using next_value for delta (was correct position but value was the current t's value — this is actually correct for reversed iteration; the prior step's "next" is this step's value)
+                next_value = value
             all_transitions.extend(traj)
         return all_transitions
 

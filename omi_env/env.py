@@ -20,15 +20,15 @@ from pettingzoo.utils import agent_selector
 
 from . import encoding, rules
 
-# Default reward values (used if not provided in config)
+# Default reward values.
 DEFAULT_REWARDS = {
-    "illegal_action_penalty": -0.1,   # BUG FIX: was +0.1 (positive penalty is a reward!)
-    "overplay_penalty": -0.05,         # BUG FIX: was +0.05
+    "illegal_action_penalty": -0.1,
+    "overplay_penalty": -0.05,
     "trick_reward": 0.1,
     "cap_bonus": 0.5,
     "declarer_bonus": 0.1,
-    "cap_penalty": -0.5,              # BUG FIX: was +0.5 (positive penalty is a reward!)
-    "trump_quality_bonus": 0.2,       # Immediate reward for picking the suit you hold most of
+    "cap_penalty": -0.5,
+    "trump_quality_bonus": 0.2,
     "declarer_team_win_bonus": 0.0,
     "declarer_team_loss_penalty": 0.0,
     "late_trick_reward": 0.0,
@@ -53,8 +53,6 @@ class OmiEnv(AECEnv):
         self.agents = [f"player_{i}" for i in range(4)]
         self.possible_agents = self.agents[:]
         # Trump declarer rotates each hand.
-        # Per your rule: the player to the right-hand side of the previous declarer
-        # declares trumps next hand (we interpret this as clockwise rotation: +1).
         self.start_player = 0
         self.reinit()
 
@@ -74,11 +72,7 @@ class OmiEnv(AECEnv):
         }
 
     def seed(self, seed: Optional[int] = None):
-        # BUG FIX (Bug 4): Previously this always called random.Random(self._seed),
-        # resetting rng to the same state on every reset() call.
-        # That made every episode replay the exact same hand — zero diversity.
-        # Now rng is only re-created when a new seed is explicitly provided.
-        # The rng advances naturally across episodes, producing diverse hands.
+        # Only reset RNG when a new seed is given.
         if seed is not None:
             self._seed = seed
             self.rng = random.Random(self._seed)
@@ -91,7 +85,7 @@ class OmiEnv(AECEnv):
         self.current_trick: List[Tuple[int, int]] = []
         self.tricks_won: Tuple[int, int] = (0, 0)
         self.history: List[Tuple[int, int, Optional[str], Optional[str]]] = []
-        # Stages: "trump" (after initial 4-card deal) -> "play" (after remaining deal)
+        # Stages: trump after first deal, then play after the rest.
         self.stage: str = "trump"
         self._terminated = False
         self._illegal_actions = 0
@@ -122,23 +116,19 @@ class OmiEnv(AECEnv):
         self.agent_selection = self.agent_selector.reset()
 
     def reset(self, seed: Optional[int] = None, options=None):
-        # BUG FIX (Bug 4 cont.): Only pass a seed when explicitly given.
-        # The old code passed self._seed unconditionally, which re-created rng
-        # from scratch every episode, replaying the same hand forever.
-        # Now when seed=None, we call self.seed(None) which does NOT reset rng,
-        # so it advances naturally and produces a fresh hand each episode.
+        # Keep RNG moving unless a seed is provided.
         self.seed(seed)
         self.reinit()
         deck = rules.shuffle_deck(self.rng)
         self.hands, self._remaining_deck = rules.deal_first_four(deck)
-        # Trump declaration: only the current declarer takes an action
+        # Only the declarer acts during trump selection.
         self._init_selector(start=self.start_player, only_one=True)
         self.has_reset = True
-        # Rotate clockwise for the next hand (right-hand side of previous declarer)
+        # Rotate declarer for the next hand.
         self.start_player = (self.start_player + 1) % 4
         return self.observe(self.agent_selection)
 
-    # PettingZoo requirement
+    # PettingZoo API.
     def observe(self, agent: str):
         agent_id = self.agents.index(agent)
         mask = self._action_mask(agent_id)
@@ -170,20 +160,19 @@ class OmiEnv(AECEnv):
 
         mask = self._action_mask(agent_id)
         
-        # Reward shaping: Illegal action penalty
+        # Penalize illegal actions and replace with a legal fallback.
         if mask[action] == 0:
             self._illegal_actions += 1
             if self.reward_shaping:
                 self.rewards[agent] += self.rewards_cfg["illegal_action_penalty"]
-            # For strictness, ignore the action by selecting a legal fallback
             legal_indices = [i for i, v in enumerate(mask) if v == 1]
             action = legal_indices[0]
 
-        # Reward shaping: Over-play penalty
+        # Penalize taking over partner's winning trick when avoidable.
         if self.reward_shaping and self.stage == "play" and len(self.current_trick) > 0:
             current_winner = rules.resolve_trick(self.current_trick, self.lead_suit, self.trump_suit)
             if rules.team_for_player(current_winner) == rules.team_for_player(agent_id):
-                # Teammate is winning. Check if we had a non-winning alternative.
+                # Check if partner could stay winning.
                 mask = self._action_mask(agent_id)
                 legal_actions = [i for i, v in enumerate(mask) if v == 1]
                 has_safe_move = False
@@ -197,10 +186,7 @@ class OmiEnv(AECEnv):
                 if has_safe_move:
                     actual_temp_trick = self.current_trick + [(agent_id, action)]
                     actual_temp_winner = rules.resolve_trick(actual_temp_trick, self.lead_suit, self.trump_suit)
-                    # Penalise two distinct mistakes when a safe move existed:
-                    #   1. Agent steals the trick from partner (actual_temp_winner == agent_id)
-                    #   2. Agent gives the trick to the opponent team (worse — a trick that
-                    #      was winnable is now lost)
+                    # Penalize stealing from partner or losing a safe trick.
                     if (actual_temp_winner == agent_id or
                             rules.team_for_player(actual_temp_winner) != rules.team_for_player(agent_id)):
                         self.rewards[agent] += self.rewards_cfg["overplay_penalty"]
@@ -213,14 +199,11 @@ class OmiEnv(AECEnv):
                 raise ValueError("During trump declaration only trump actions are legal")
             suit_idx = action - rules.ACTION_TRUMP_OFFSET
             self.trump_suit = rules.SUITS[suit_idx]
-            # Deal remaining 16 cards (4 to each) after trump is declared
+            # Deal the remaining cards after trump is declared.
             self.hands = rules.deal_remaining_four(self.hands, self._remaining_deck)
             self._remaining_deck = []
 
-            # Store trump quality for deferred reward at episode end.
-            # Deferring avoids the credit-assignment mismatch of rewarding at
-            # step 0 for an outcome that resolves 32 steps later. The bonus is
-            # applied at terminal, scaled by the team's actual win fraction.
+            # Reward trump choice at episode end.
             if self.reward_shaping:
                 full_hand = self.hands[agent_id]
                 trump_count = sum(
@@ -229,7 +212,7 @@ class OmiEnv(AECEnv):
                 )
                 self._trump_quality = trump_count / float(rules.HAND_SIZE)
             self.stage = "play"
-            # Switch turn order back to all 4 players; declarer leads first trick
+            # Declarer leads the first trick.
             self._init_selector(start=agent_id)
             advance_turn = False
         else:
@@ -270,7 +253,7 @@ class OmiEnv(AECEnv):
                     self.rewards[agent] += self.rewards_cfg.get("wasted_trump_penalty", 0.0)
                     self._shaping_events["wasted_trump"] += 1
 
-            # Remove card from hand
+            # Remove card from hand.
             try:
                 self.hands[agent_id].remove(card_idx)
             except ValueError as exc:
@@ -282,7 +265,7 @@ class OmiEnv(AECEnv):
             self.history.append((agent_id, card_idx, self.lead_suit, self.trump_suit))
             self.episode_length += 1
 
-            # Resolve trick if complete
+            # Resolve a completed trick.
             if len(self.current_trick) == 4:
                 winner = rules.resolve_trick(self.current_trick, self.lead_suit, self.trump_suit)
                 winning_card = next(card for player, card in self.current_trick if player == winner)
@@ -293,7 +276,7 @@ class OmiEnv(AECEnv):
                 else:
                     self.tricks_won = (self.tricks_won[0], self.tricks_won[1] + 1)
 
-                # Reward shaping: Trick winner reward
+                # Reward the trick-winning team.
                 if self.reward_shaping:
                     team_winning = rules.team_for_player(winner)
                     for ag_id, ag_name in enumerate(self.agents):
@@ -317,15 +300,15 @@ class OmiEnv(AECEnv):
 
                 self.current_trick = []
                 self.lead_suit = None
-                # Next trick led by winner
+                # Trick winner leads next.
                 self._init_selector(start=winner)
                 advance_turn = False
 
-        # Advance to next agent unless game just ended
+        # Advance turn unless the game ended.
         if advance_turn and not self._terminated:
             self.agent_selection = self.agent_selector.next()
 
-        # Terminal check
+        # End the hand when no cards remain or a winner is decided.
         cards_remaining = sum(len(h) for h in self.hands)
         self._terminated = rules.is_terminal(self.tricks_won, cards_remaining)
 
@@ -349,18 +332,16 @@ class OmiEnv(AECEnv):
                     reward = self.rewards_cfg.get("draw_penalty", 0.0)
                 elif ag_team == winner_team:
                     if self.reward_shaping:
-                        # Margin-based reward scaled to 0–2.0 so terminal signal
-                        # dominates accumulated trick rewards (max ~0.4 at 0.05/trick)
+                        # Scale terminal reward by win margin.
                         my_team_tricks = self.tricks_won[ag_team]
                         reward = (my_team_tricks - 4) / 4.0 * 2.0
                         if my_team_tricks == 8:
                             reward += self.rewards_cfg["cap_bonus"]
 
-                        # Trump declarer bonus
+                        # Reward the declarer for a winning hand.
                         if ag_id == declarer_id:
                             reward += self.rewards_cfg["declarer_bonus"]
-                            # Deferred trump quality bonus: reward good suit selection,
-                            # scaled by actual win fraction so credit aligns with outcome
+                            # Scale trump quality by final result.
                             win_fraction = my_team_tricks / float(rules.TRICKS_PER_HAND)
                             reward += (
                                 self.rewards_cfg.get("trump_quality_bonus", 0.0)
@@ -372,7 +353,7 @@ class OmiEnv(AECEnv):
                 else:
                     if self.reward_shaping:
                         opp_team_tricks = self.tricks_won[1 - ag_team]
-                        # Symmetric scale with winner: 0 to -2.0
+                        # Losing penalty mirrors the winner scale.
                         reward = -(opp_team_tricks - 4) / 4.0 * 2.0
                         if opp_team_tricks == 8:
                             reward += self.rewards_cfg["cap_penalty"]

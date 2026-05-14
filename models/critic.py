@@ -22,7 +22,6 @@ def encode_central_state(state: dict) -> torch.Tensor:
     history = state.get("history", [])
     tricks_won = state.get("tricks_won", (0, 0))
 
-    # Reuse encoding helpers instead of duplicating one-hot logic here
     hand_vecs = []
     for h in hands:
         vec = [0.0] * rules.NUM_CARDS
@@ -66,29 +65,24 @@ class CentralCritic(nn.Module):
         super().__init__()
         self.hidden_size = hidden_size
 
-        # Split point: state features vs flattened history in the input vector.
-        # State features = 4 hands + trump + lead + trick + score
-        #   = 8 * NUM_CARDS + 4 + 4 + 2 = 8*32 + 10 = 266 dims
-        # History = HISTORY_LEN * HISTORY_FEAT_DIM = 32 * 44 = 1408 dims
+        # State features come before flattened history.
         self._state_dim = 8 * rules.NUM_CARDS + 10
         self._hist_len = encoding.HISTORY_LEN
         self._hist_feat = encoding.HISTORY_FEAT_DIM
 
-        # State encoder
         self.state_encoder = nn.Sequential(
             nn.Linear(self._state_dim, hidden_size),
             nn.LayerNorm(hidden_size),
             nn.Tanh(),
         )
 
-        # History encoder: project each timestep's features into hidden space
+        # Project each history step into hidden space.
         self.hist_proj = nn.Linear(self._hist_feat, hidden_size)
 
-        # Single-head attention: state embedding queries into history keys/values
+        # Let state attend to play history.
         self.attn_query = nn.Linear(hidden_size, hidden_size)
         self.attn_key = nn.Linear(hidden_size, hidden_size)
 
-        # Value head: fuses attended history with state embedding
         self.value_head = nn.Sequential(
             nn.Linear(hidden_size * 2, hidden_size),
             nn.LayerNorm(hidden_size),
@@ -99,14 +93,14 @@ class CentralCritic(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         B = x.shape[0]
 
-        # Split flat input back into state features and history sequence
+        # Split state features from history sequence.
         state = x[:, :self._state_dim]
         hist = x[:, self._state_dim:].reshape(B, self._hist_len, self._hist_feat)
 
         state_emb = self.state_encoder(state)           # (B, H)
         hist_proj = torch.tanh(self.hist_proj(hist))    # (B, L, H)
 
-        # Scaled dot-product attention: state queries, history keys/values
+        # Single-head attention over history.
         q = self.attn_query(state_emb).unsqueeze(1)     # (B, 1, H)
         k = self.attn_key(hist_proj)                    # (B, L, H)
         scale = self.hidden_size ** -0.5

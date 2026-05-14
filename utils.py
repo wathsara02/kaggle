@@ -76,10 +76,6 @@ def bootstrap_confidence_interval(data, num_bootstrap: int = 2000, alpha: float 
     return float(lower), float(upper)
 
 
-# ---------------------------------------------------------------------------
-# Shared config / model helpers
-# ---------------------------------------------------------------------------
-
 def _deep_merge(base: dict, override: dict) -> dict:
     """Recursively merge override into base, modifying base in-place."""
     for k, v in override.items():
@@ -96,9 +92,9 @@ def load_config(path: str) -> dict:
 
     Always starts with ``configs/default.yaml`` as a base (located relative to
     this file) and deep-merges the target config over it so partial override
-    files (e.g. small.yaml, lstm.yaml) never cause KeyErrors.
+    files (e.g. new.yaml, small.yaml) never cause KeyErrors.
     """
-    # Anchor to this file's directory so the path works regardless of CWD
+    # Resolve paths from the repo root.
     _here = Path(__file__).resolve().parent
     default_path = _here / "configs" / "default.yaml"
     with open(default_path, "r") as f:

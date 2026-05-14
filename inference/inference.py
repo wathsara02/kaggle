@@ -34,10 +34,8 @@ class InferenceAgent:
         """
         Choose an action.
 
-        temperature controls difficulty when deterministic=False:
-            < 1.0  →  harder  (agent picks best move more consistently)
-            1.0    →  default
-            > 1.0  →  easier  (more random)
+        Lower temperature makes sampling less random.
+        Higher temperature makes sampling more random.
         deterministic=True overrides temperature and always picks argmax.
         """
         self.policy.eval()

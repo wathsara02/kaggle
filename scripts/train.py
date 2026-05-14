@@ -23,11 +23,9 @@ from utils import build_policy, ensure_dir, get_device, load_config, set_seed, w
 from marl.vector_env import CloudVectorEnv
 from functools import partial
 
-# ── T4 GPU performance flags ──────────────────────────────────────────────────
-# Allow TF32 on Ampere/Turing GPUs for faster matrix ops (harmless on T4)
+# CUDA speed settings.
 torch.backends.cuda.matmul.allow_tf32 = True
 torch.backends.cudnn.allow_tf32 = True
-# Let cuDNN auto-select the fastest algorithm for fixed input sizes
 torch.backends.cudnn.benchmark = True
 
 
@@ -62,8 +60,7 @@ def build_trainer(cfg: dict, device: torch.device):
     encoded_state = encode_central_state(dummy_state)
     critic = CentralCritic(input_dim=encoded_state.shape[0], hidden_size=cfg["model"]["critic_hidden_size"])
 
-    # torch.compile gives 20-40% speedup on T4 via kernel fusion and graph optimisation.
-    # Only applied when CUDA is available; silently skipped on CPU.
+    # Compile only on CUDA.
     if device.type == "cuda":
         try:
             policy = torch.compile(policy, mode="reduce-overhead")
@@ -170,7 +167,7 @@ def save_checkpoint(path: Path, trainer, ep: int, totals: dict):
             "team_a": totals["team_a"],
             "team_b": totals["team_b"],
             "illegal": totals["illegal"],
-            # lengths list can be huge; save just the count to keep file small
+            # Save summary only; the full list can be large.
             "lengths_count": len(totals["lengths"]),
             "lengths_sum": sum(totals["lengths"]),
         },
@@ -371,7 +368,7 @@ def load_checkpoint(path: Path, trainer):
     trainer.optimizer_v.load_state_dict(ckpt["optimizer_v_state_dict"])
     ep = ckpt["episode"]
     raw = ckpt["totals"]
-    # Reconstruct totals; lengths list is approximated from saved sum/count
+    # Rebuild length history from saved summary.
     avg_len = raw["lengths_sum"] / raw["lengths_count"] if raw["lengths_count"] > 0 else 0.0
     totals = {
         "team_a": raw["team_a"],
@@ -385,7 +382,7 @@ def load_checkpoint(path: Path, trainer):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--config", type=str, default="configs/default.yaml")
+    parser.add_argument("--config", type=str, default="configs/new.yaml")
     parser.add_argument("--resume", action="store_true",
                         help="Resume from checkpoint_latest.pt in the run directory if it exists")
     parser.add_argument("--episodes", type=int, default=None,
@@ -407,7 +404,7 @@ def main():
     prefer_cuda = requested_device in ["cuda", "gpu"]
     device = get_device(prefer_cuda)
 
-    # OPTIMISATION: faster float32 matmul on GPUs that support it
+    # Use faster float32 matmul when available.
     if device.type == "cuda":
         torch.set_float32_matmul_precision("high")
         print(f"[DEVICE] Using CUDA GPU: {torch.cuda.get_device_name(0)}")
@@ -431,7 +428,7 @@ def main():
     max_recorded_matches = int(logging_cfg.get("max_recorded_matches", 0))
     recorded_matches = 0
 
-    # How often (in episodes) to save a resumable checkpoint
+    # Save resumable checkpoints on this interval.
     checkpoint_interval = cfg["training"].get("checkpoint_interval", 1000)
     latest_ckpt_path = run_dir / "checkpoint_latest.pt"
 
@@ -443,7 +440,7 @@ def main():
     ep = 0
     num_envs = getattr(env, "num_envs", 1)
 
-    # ── Curriculum training setup ──────────────────────────────────────────────
+    # Curriculum setup.
     curriculum_cfg = cfg.get("curriculum", {})
     curriculum_enabled = curriculum_cfg.get("enabled", False)
     phase1_threshold     = curriculum_cfg.get("phase1_win_rate_threshold", 0.65)
@@ -461,7 +458,7 @@ def main():
             f"win rate >= {phase1_threshold:.0%} over {phase1_window} episodes."
         )
 
-    # ── Resume from checkpoint if requested (or auto-detect) ──────────────────
+    # Resume if requested.
     if latest_ckpt_path.exists() and args.resume:
         ep, totals = load_checkpoint(latest_ckpt_path, trainer)
     elif latest_ckpt_path.exists():
@@ -475,7 +472,6 @@ def main():
         losses = trainer.update(transitions)
         trainer.anneal_lr(ep / total_episodes)
 
-        # Accumulate losses for block logging
         block_stats["policy_loss"] += losses.get("policy_loss", 0.0)
         block_stats["value_loss"]  += losses.get("value_loss",  0.0)
         block_stats["entropy"]     += losses.get("entropy",     0.0)
@@ -576,14 +572,10 @@ def main():
                                "policy_loss": 0.0, "value_loss": 0.0, "entropy": 0.0, "updates": 0,
                                "shaping_events": {key: 0 for key in SHAPING_EVENT_KEYS}}
 
-        # BUG FIX (Bug 3): increment by actual completed episodes, not assumed parallel count.
-        # With num_envs=16, ep jumped by 16 each iteration regardless of how many episodes
-        # finished — causing milestone checkpoints to be skipped entirely.
         ep_step = len(infos)
         ep += ep_step
         progress_bar.update(ep, totals, losses)
 
-        # ── Curriculum phase management ────────────────────────────────────────
         if curriculum_enabled:
             for info in infos:
                 winner = info.get("winner_team", -1)
@@ -618,7 +610,6 @@ def main():
             torch.save(model_state_dict(trainer.critic), run_dir / "critic_2_3.pt")
             print(f"Saved 2/3 checkpoint at episode {ep}")
 
-        # ── Periodic plot save (every 5000 episodes) ──────────────────────────
         prev_plot = (ep - ep_step) // 5000
         curr_plot = ep // 5000
         if curr_plot > prev_plot:
@@ -629,7 +620,6 @@ def main():
             except ImportError as exc:
                 print(f"[PLOT] Skipped plot update: {exc}")
 
-        # ── Periodic resumable checkpoint ──────────────────────────────────────
         prev_interval = (ep - ep_step) // checkpoint_interval
         curr_interval = ep // checkpoint_interval
         if curr_interval > prev_interval:
@@ -638,7 +628,6 @@ def main():
 
         eval_manager.maybe_launch(ep - ep_step, ep, trainer)
 
-    # Final summary
     eval_manager.finish()
     progress_bar.newline()
     total_len = sum(totals["lengths"]) / len(totals["lengths"]) if totals["lengths"] else 0.0
@@ -653,11 +642,9 @@ def main():
         f"Illegal actions: {totals['illegal']}"
     )
 
-    # Save latest weights
     torch.save(model_state_dict(trainer.policy), run_dir / "policy_last.pt")
     torch.save(model_state_dict(trainer.critic), run_dir / "critic_last.pt")
     
-    # Save the 3/3 checkpoint
     torch.save(model_state_dict(trainer.policy), run_dir / "policy_3_3.pt")
     torch.save(model_state_dict(trainer.critic), run_dir / "critic_3_3.pt")
 

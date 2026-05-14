@@ -29,31 +29,26 @@ class PolicyNet(nn.Module):
         action_dim: int,
         hidden_size: int = 128,
         recurrent_type: str = "none",
-        hist_feat_dim: int = 0,   # per-step feature dim for LSTM (ignored in FF mode)
+        hist_feat_dim: int = 0,
     ):
         super().__init__()
         self.recurrent_type = recurrent_type.lower()
         self.hidden_size = hidden_size
 
-        # Observation encoder (shared by both modes)
+        # Shared observation encoder.
         self.obs_encoder = nn.Linear(obs_dim, hidden_size)
 
         if self.recurrent_type == "lstm":
-            # history_dim is the flat size (HISTORY_LEN * HISTORY_FEAT_DIM).
-            # The LSTM processes one step at a time, so input_size = HISTORY_FEAT_DIM.
-            # We derive it from the encoded history shape in forward(); store for reference.
             self._history_feat_dim = hist_feat_dim
             self.lstm = nn.LSTM(
-                input_size=hist_feat_dim,      # per-step feature dim
+                input_size=hist_feat_dim,
                 hidden_size=hidden_size,
                 num_layers=1,
                 batch_first=True,
             )
-            core_in = hidden_size * 2   # obs_emb + lstm_out
+            core_in = hidden_size * 2
         else:
-            # Feed-forward: 2-layer MLP to capture structure in the flattened history.
-            # A single linear layer crushes 1408 dims into 256 with no intermediate
-            # reasoning; the extra layer + norms give the encoder representational depth.
+            # Encode flattened history for feed-forward mode.
             self.hist_encoder = nn.Sequential(
                 nn.Linear(history_dim, hidden_size * 2),
                 nn.LayerNorm(hidden_size * 2),
@@ -65,17 +60,13 @@ class PolicyNet(nn.Module):
 
         self.core = nn.Sequential(
             nn.Linear(core_in, hidden_size),
-            nn.LayerNorm(hidden_size),   # OPTIMISATION: LayerNorm stabilises training with larger hidden size
+            nn.LayerNorm(hidden_size),
             nn.Tanh(),
             nn.Linear(hidden_size, hidden_size),
             nn.LayerNorm(hidden_size),
             nn.Tanh(),
         )
         self.actor = nn.Linear(hidden_size, action_dim)
-
-    # ------------------------------------------------------------------
-    # Hidden-state management (only relevant for LSTM mode)
-    # ------------------------------------------------------------------
 
     def init_hidden(self, batch_size: int, device: torch.device):
         """Return a fresh (h_0, c_0) tuple for LSTM mode, or None otherwise."""
@@ -84,10 +75,6 @@ class PolicyNet(nn.Module):
             c = torch.zeros(1, batch_size, self.hidden_size, device=device)
             return (h, c)
         return None
-
-    # ------------------------------------------------------------------
-    # Forward pass
-    # ------------------------------------------------------------------
 
     def forward(
         self,
@@ -101,7 +88,7 @@ class PolicyNet(nn.Module):
             obs:          (B, obs_dim)
             history:      (B, H, F) sequence  OR  (B, H*F) flat tensor.
             hidden_state: (h, c) tuple for LSTM, or None for feed-forward.
-            action_mask:  (B, action_dim) — 1 = legal, 0 = illegal.
+            action_mask:  (B, action_dim), 1 = legal and 0 = illegal.
 
         Returns:
             logits:       (B, action_dim)
@@ -111,16 +98,15 @@ class PolicyNet(nn.Module):
         obs_emb = torch.tanh(self.obs_encoder(obs))  # (B, H)
 
         if self.recurrent_type == "lstm":
-            # Ensure (B, seq_len, feat_dim) shape
+            # Convert flat history to sequence form if needed.
             if history.dim() == 2:
-                # Infer sequence shape: flat → (B, HISTORY_LEN, FEAT_DIM)
                 feat_dim = self.lstm.input_size
                 history = history.view(B, -1, feat_dim)
 
             if hidden_state is None:
                 hidden_state = self.init_hidden(B, obs.device)
 
-            # Detach to prevent BPTT beyond a single episode step during update
+            # Keep updates local to the collected step.
             h, c = hidden_state
             h = h.detach()
             c = c.detach()
@@ -130,10 +116,10 @@ class PolicyNet(nn.Module):
             hidden_out = (h_new, c_new)
             x = torch.cat([obs_emb, lstm_out], dim=-1)
         else:
-            # Feed-forward mode — flatten history
+            # Feed-forward mode uses flat history.
             if history.dim() == 3:
                 history = history.reshape(B, -1)
-            hist_emb = self.hist_encoder(history)  # MLP has its own norms/activations
+            hist_emb = self.hist_encoder(history)
             x = torch.cat([obs_emb, hist_emb], dim=-1)
             hidden_out = None
 

@@ -1,17 +1,9 @@
-# =============================================================================
-# LOCAL TRAINING CONFIG - Ryzen 5 5600G / RX 6700 XT / 32 GB RAM
-#
-# This config is optimized for reliable local Windows training.
-# The RX 6700 XT is an AMD GPU, and standard PyTorch on Windows does not use it
-# through CUDA. Use CPU here unless you move to a ROCm-supported Linux setup.
-# =============================================================================
-
+# Main local CPU training config.
 seed: 42
 device: cpu
 
 model:
   recurrent_type: none
-  # Smaller than the T4 config so CPU PPO updates remain practical.
   recurrent_hidden_size: 128
   critic_hidden_size: 128
 
@@ -28,14 +20,10 @@ algo:
   batch_size: 1024
   ppo_epochs: 4
   max_grad_norm: 0.5
-  # Keep some rule-agent exposure, but enough self-play to avoid overfitting.
   rule_mix_prob: 0.35
 
 training:
-  # Local CPU training is much slower than Kaggle T4. Use this as a practical
-  # local baseline, then resume/add more episodes if the curve is improving.
   episodes: 1750000
-  # Ryzen 5 5600G has 6 cores / 12 threads. Six env workers is a good first try.
   num_envs: 6
   exp_name: local_5600g
   log_interval: 1000
@@ -68,7 +56,6 @@ eval:
   deterministic: true
   during_training:
     enabled: true
-    # Save a snapshot and start a separate baseline eval every 10,000 episodes.
     interval_episodes: 10000
     episodes: 1000
     baseline: rule

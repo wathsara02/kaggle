@@ -25,8 +25,7 @@ def worker(remote, parent_remote, env_fn_wrapper):
             elif cmd == 'rewards':
                 remote.send(env.rewards)
             elif cmd == 'cumulative_rewards':
-                # BUG FIX: env.rewards is zeroed after each step by _accumulate_rewards.
-                # _cumulative_rewards holds the correct per-episode accumulated rewards.
+                # Use episode totals, not per-step rewards.
                 remote.send(env._cumulative_rewards)
             elif cmd == 'state':
                 remote.send(env.state())
@@ -39,15 +38,14 @@ def worker(remote, parent_remote, env_fn_wrapper):
             break
 
 class CloudVectorEnv:
-    """A minimal SubprocVecEnv specifically tailored for PettingZoo AEC OmiEnv."""
+    """Small subprocess vector env for OmiEnv."""
     def __init__(self, env_fns):
         self.waiting = False
         self.closed = False
         self.num_envs = len(env_fns)
 
         import os
-        # BUG FIX: use 'forkserver' context on Linux to avoid CUDA/NCCL deadlocks,
-        # but Windows doesn't support 'fork' or 'forkserver' — it only supports 'spawn'.
+        # Windows only supports spawn.
         if os.name == 'nt':
             ctx = mp.get_context("spawn")
         else:
@@ -57,7 +55,7 @@ class CloudVectorEnv:
                    for (work_remote, remote, env_fn) in zip(self.work_remotes, self.remotes, env_fns)]
 
         for p in self.ps:
-            p.daemon = True  # Ensures processes close when main process closes
+            p.daemon = True
             p.start()
         for remote in self.work_remotes:
             remote.close()
@@ -103,10 +101,7 @@ class CloudVectorEnv:
         return self._send_to_active('rewards', [None]*len(env_indices), env_indices)
 
     def get_cumulative_rewards(self, env_indices: list = None):
-        # BUG FIX (Bug 1): returns _cumulative_rewards, not rewards.
-        # env.rewards is zeroed inside env.step() → _accumulate_rewards(), so
-        # get_rewards() always returns 0.0 after a step. _cumulative_rewards
-        # holds the correctly accumulated episode rewards.
+        # Return episode totals.
         if env_indices is None: env_indices = list(range(self.num_envs))
         return self._send_to_active('cumulative_rewards', [None]*len(env_indices), env_indices)
 

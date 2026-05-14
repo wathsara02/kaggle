@@ -16,7 +16,7 @@ from utils import build_policy, clean_state_dict, ensure_dir, get_device, load_c
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--config", type=str, default="configs/default.yaml")
+    parser.add_argument("--config", type=str, default="configs/new.yaml")
     parser.add_argument("--weights", type=str, required=True, help="Trained policy weights path")
     parser.add_argument("--output_dir", type=str, default=None, help="Override export output directory")
     args = parser.parse_args()

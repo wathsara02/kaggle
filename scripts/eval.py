@@ -88,7 +88,7 @@ def log_block(progress_pct, episodes_done, block_count, agent_wins, baseline_win
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--config", type=str, default="configs/default.yaml")
+    parser.add_argument("--config", type=str, default="configs/new.yaml")
     parser.add_argument("--weights", type=str, required=True, help="Path to policy weights")
     parser.add_argument("--episodes", type=int, default=50)
     parser.add_argument("--baseline", type=str, choices=["rule", "random"], default="rule")

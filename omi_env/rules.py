@@ -14,7 +14,7 @@ from typing import List, Optional, Sequence, Tuple
 
 SUITS: Sequence[str] = ("C", "D", "H", "S")  # Clubs, Diamonds, Hearts, Spades
 
-# Omi (32-card) ranks: 7..A (8 ranks × 4 suits = 32 cards)
+# Omi uses 32 cards: ranks 7 through A in four suits.
 RANKS: Sequence[str] = ("7", "8", "9", "10", "J", "Q", "K", "A")
 
 NUM_CARDS = 32
