@@ -65,6 +65,18 @@ eval:
   episodes: 200
   baseline: rule
   deterministic: true
+  during_training:
+    enabled: false
+    # Set this in a run config to evaluate checkpoints while training continues.
+    interval_episodes: 10000
+    episodes: 200
+    baseline: rule
+    deterministic: true
+    device: cpu
+    max_parallel: 1
+    record_match_traces: false
+    keep_eval_weights: true
+    wait_on_finish: false
 
 # ---------------------------------------------------------------------------
 # Export (used by scripts/export.py)

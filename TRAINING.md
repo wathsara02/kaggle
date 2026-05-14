@@ -16,6 +16,26 @@ python scripts/train.py --config configs/default.yaml
 
 Training writes checkpoints and logs to the run directory (see your config).
 
+### Final project training config
+```bash
+python scripts/train.py --config configs/new.yaml --resume
+```
+
+`configs/new.yaml` now starts a separate baseline evaluation every 10,000
+completed training episodes. Training continues while the eval process runs.
+Evidence is written under:
+
+- `runs/local_5600g/training_summary.csv`
+- `runs/local_5600g/training_progress.png`
+- `runs/local_5600g/training_win_rate.png`
+- `runs/local_5600g/training_losses.png`
+- `runs/local_5600g/training_entropy.png`
+- `runs/local_5600g/training_illegal_actions.png`
+- `runs/local_5600g/training_reward_shaping_events.png`
+- `runs/local_5600g/baseline_evals/baseline_eval_results.csv`
+- `runs/local_5600g/baseline_evals/baseline_eval_over_time.png`
+- `runs/local_5600g/baseline_evals/baseline_eval_agent_win_rate.png`
+
 ## 2) Evaluation
 
 ### Evaluate a saved policy vs baselines

@@ -66,6 +66,18 @@ eval:
   episodes: 1000
   baseline: rule
   deterministic: true
+  during_training:
+    enabled: true
+    # Save a snapshot and start a separate baseline eval every 10,000 episodes.
+    interval_episodes: 10000
+    episodes: 1000
+    baseline: rule
+    deterministic: true
+    device: cpu
+    max_parallel: 1
+    record_match_traces: false
+    keep_eval_weights: true
+    wait_on_finish: false
 
 export:
   output_dir: artifacts
